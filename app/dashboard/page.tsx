@@ -1,7 +1,16 @@
-// Placeholder dashboard route. The Auth sub-project (#3) replaces this content
-// with a signed-in history view. Persistence sub-project (#4) wires the data.
-// The Supabase smoke test is added in Task 8 and removed when Auth lands.
-export default function DashboardPage() {
+import { createClient } from '@/app/lib/supabase/server';
+
+export default async function DashboardPage() {
+  // Foundation smoke test: prove SSR + cookies + connection work end-to-end.
+  // Uses auth.getSession() because PostgREST does not expose pg_catalog/system tables,
+  // and we have no application tables yet (sat schema is empty). getSession() with no
+  // active session returns { data: { session: null }, error: null } — a "success" outcome
+  // that exercises the full cookie+SSR+HTTPS path.
+  // Removed by the Auth sub-project (#3) when real session reads land.
+  const supabase = await createClient();
+  const { error } = await supabase.auth.getSession();
+  console.log('[Foundation smoke]', error ? `error: ${error.message}` : 'connected');
+
   return (
     <main className="mx-auto max-w-2xl p-6">
       <h1 className="text-2xl font-bold mb-2">Your dashboard</h1>
