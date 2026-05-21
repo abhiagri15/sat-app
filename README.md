@@ -1,14 +1,14 @@
 # SAT Practice Test (Next.js)
 
-A timed, replayable SAT-style practice test built with React (Next.js 14, App Router).
+A timed, replayable SAT-style practice test built with React (Next.js 15, App Router, React 19).
 Enter a name, take timed Reading & Writing and Math sections, submit, and get an instant
 score with a worked explanation for every question. "Start a New Test" reshuffles fresh,
 randomized questions and answer order.
 
 ## Run it locally
 
-    npm install
-    npm run dev
+    pnpm install
+    pnpm dev
 
 Then open http://localhost:3000
 
@@ -32,22 +32,31 @@ Follow the prompts (it opens a browser to log in the first time). Run "npx verce
 to push the production deployment.
 
 ## Project structure
-- app/page.js          home route, renders the test component
-- app/SatPractice.jsx  all test logic (start screen, timer, scoring, review)
-- app/questions.js     the question bank (add or edit questions here)
-- app/SatPractice.module.css / app/globals.css   styling
+- app/page.tsx                       home route, renders the SAT practice test
+- app/components/SatPractice.tsx     thin FSM router (Start | Test | Results)
+- app/components/{StartScreen,TestScreen,ResultsScreen,...}.tsx   screens + sub-components
+- app/hooks/useTestSession.ts        all gameplay state + timer
+- app/lib/test.ts                    pure logic (buildTest, computeResults, fmtTime)
+- app/lib/questions.ts               typed seed question bank (33 entries: 16 RW + 17 Math)
+- app/dashboard/page.tsx             placeholder, fills in after Auth sub-project
 
 ## Adding questions
-Open app/questions.js and add objects to the BANK array. Each question looks like:
+Open `app/lib/questions.ts` and add objects to the `BANK` array. Each question looks like:
 
-    {
-      section: 'math',           // 'rw' or 'math'
-      skill: 'Linear Equations',
-      prompt: 'If 3x + 7 = 22, what is the value of x?',
-      choices: ['3', '5', '7', '15'],
-      answer: 1,                 // index of the correct choice
-      explanation: 'Subtract 7: 3x = 15. Divide by 3: x = 5.',
-    }
+```ts
+{
+  id: 'seed-math-018',            // stable id; see Foundation spec for format
+  section: 'math',                // 'rw' or 'math'
+  skill: 'Linear Equations',
+  prompt: '…',
+  choices: ['…', '…', '…', '…'],
+  answerIndex: 1,                 // index of the correct choice (was `answer` pre-Foundation)
+  explanation: '…',               // may contain inline HTML (<b>, <i>)
+  source: 'seed',
+}
+```
 
-Reading & Writing questions may also include a "passage" field. The app shuffles both the
+Reading & Writing questions may also include a `passage` field. The app shuffles both the
 question order and the answer choices on every test.
+
+After the AI sub-project lands, the question bank moves to Supabase; this file becomes the seed source only.
