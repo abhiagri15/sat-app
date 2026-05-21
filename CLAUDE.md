@@ -19,15 +19,36 @@ There are no tests in this project.
 
 Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focused modules.
 
-- [app/page.tsx](app/page.tsx) — server entry, renders `<SatPractice />`.
-- [app/components/SatPractice.tsx](app/components/SatPractice.tsx) — `'use client'`. Thin FSM router: `'start' | 'test' | 'results'`. Delegates all state to `useTestSession`.
-- [app/hooks/useTestSession.ts](app/hooks/useTestSession.ts) — `'use client'` hook. Holds the timer (a `setInterval` ref restarted whenever `secIdx` changes), per-section `remaining[]` countdown, and `responses[secIdx][qIdx]` answer matrix.
+- [app/(app)/page.tsx](app/(app)/page.tsx) — server entry (authenticated), reads the profile, renders `<SatPractice studentName={...} />`.
+- [app/(app)/dashboard/page.tsx](app/(app)/dashboard/page.tsx) — dashboard; shows signed-in user and a test-history placeholder.
+- [app/(auth)/login/page.tsx](app/(auth)/login/page.tsx) — email/password sign-in + Google OAuth button.
+- [app/(auth)/register/page.tsx](app/(auth)/register/page.tsx) — account creation.
+- [app/(auth)/forgot-password/page.tsx](app/(auth)/forgot-password/page.tsx) — password-reset request.
+- [app/(auth)/reset-password/page.tsx](app/(auth)/reset-password/page.tsx) — new-password form.
+- [app/auth/callback/route.ts](app/auth/callback/route.ts) — exchanges the OAuth/email-link `code` for a session; redirects into the app.
+- [middleware.ts](middleware.ts) — refreshes the Supabase session cookie every request; redirects unauthenticated traffic to `/login`. Public paths: `/login`, `/register`, `/forgot-password`, `/reset-password`, `/auth/callback`.
+- [app/components/AppHeader.tsx](app/components/AppHeader.tsx) — server component; shows title, `/dashboard` link, user display name, and a Sign out button.
+- [app/lib/auth/schemas.ts](app/lib/auth/schemas.ts) — zod schemas for the four auth forms (`loginSchema`, `registerSchema`, `forgotPasswordSchema`, `resetPasswordSchema`).
+- [app/lib/auth/actions.ts](app/lib/auth/actions.ts) — `'use server'` `signOut()` action: clears the session and redirects to `/login`.
+- [app/lib/auth/profile.ts](app/lib/auth/profile.ts) — `getOrCreateProfile()`: React `cache()`-wrapped server helper; reads or lazily creates the signed-in user's `sat.profiles` row.
+- [app/components/SatPractice.tsx](app/components/SatPractice.tsx) — `'use client'`. Thin FSM router: `'start' | 'test' | 'results'`. Accepts `studentName` prop; delegates all state to `useTestSession`.
+- [app/hooks/useTestSession.ts](app/hooks/useTestSession.ts) — `'use client'` hook. Holds the timer (a `setInterval` ref restarted whenever `secIdx` changes), per-section `remaining[]` countdown, and `responses[secIdx][qIdx]` answer matrix. Accepts `initialName` to seed the `name` state from the profile.
 - [app/lib/test.ts](app/lib/test.ts) — pure logic: `buildTest`, `computeResults`, `fmtTime`. No React dependencies.
 - [app/lib/questions.ts](app/lib/questions.ts) — `BANK` array + `SECTION_CONFIG` + `SECTION_ORDER`. The single source of truth for content and timing.
 
 `buildTest()` in `app/lib/test.ts` is the test-construction pipeline: filters `BANK` by section, shuffles questions, shuffles each question's choices (remapping the stored `answerIndex` to the new position), and slices to `shortCount` for "Quick" or all questions for "Full". A fresh shuffle runs on every "Start a New Test" — there is no persistence (no localStorage, no backend).
 
 Path alias `@/*` → `./*` (repo root) is configured in `tsconfig.json`; cross-directory imports use `@/app/...`, while within a directory relative imports are the convention.
+
+## Auth gotchas
+
+- **The `sat` schema MUST be exposed in Supabase API settings.** The app queries `sat.profiles` via `supabase.schema('sat').from('profiles')` (PostgREST). Supabase only exposes the `public` schema by default. If `sat` is not added to Settings → API → Exposed Schemas, every call to `getOrCreateProfile()` fails — every authenticated page will error. This is a one-time dashboard action on the Property Ledger project (`falgykkspbtrwdcchayi`).
+
+- **`sat.profiles.role` is not user-writable.** The `authenticated` role has column-scoped `GRANT`s: `INSERT` on `(id, email, full_name, avatar_url)` and `UPDATE` on `(email, full_name, avatar_url)`. The `role` column is intentionally excluded — a user cannot escalate their own role to `admin` via the API. To promote a user to admin, run a direct `UPDATE` using the `postgres` or service role: `update sat.profiles set role = 'admin' where id = '<user-uuid>';`
+
+- **Profile rows are created by `getOrCreateProfile()`, NOT by a database trigger on `auth.users`.** The Property Ledger Supabase project is shared with the PropLedger app. An `on_auth_user_created` trigger on the shared `auth.users` table would fire for every PropLedger sign-up, creating junk `sat.profiles` rows. Application-code provisioning keeps the SAT app fully confined to the `sat` schema. `getOrCreateProfile()` is called on every authenticated entry point (`AppHeader`, `(app)/page.tsx`, `(app)/dashboard/page.tsx`), so the row is reliably created on first load regardless of sign-up method.
+
+- **Middleware gates everything except `PUBLIC_PATHS`.** The public paths are: `/login`, `/register`, `/forgot-password`, `/reset-password`, `/auth/callback`. Every other route requires a session — `middleware.ts` redirects unauthenticated requests to `/login`. If you add a new public route (e.g. a health-check endpoint), add it to `PUBLIC_PATHS` in `middleware.ts` or it will be gated.
 
 ## Things that will bite you
 
