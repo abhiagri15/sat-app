@@ -1,7 +1,11 @@
 'use client';
 
 import type { TestLength } from '@/app/lib/test';
-import styles from '@/app/SatPractice.module.css';
+import { Button } from '@/app/components/ui/button';
+import { Card, CardContent } from '@/app/components/ui/card';
+import { Input } from '@/app/components/ui/input';
+import { Label } from '@/app/components/ui/label';
+import { cn } from '@/app/lib/utils';
 
 interface StartScreenProps {
   name: string;
@@ -13,52 +17,58 @@ interface StartScreenProps {
 
 export function StartScreen({ name, setName, testLength, setTestLength, onStart }: StartScreenProps) {
   return (
-    <div className={styles.wrap}>
-      <div className={styles.card}>
-        <span className={styles.pill}>Digital SAT · Practice</span>
-        <h1 className={styles.h1}>SAT Practice Test</h1>
-        <p className={styles.lead}>
-          A full timed practice run with Reading &amp; Writing and Math sections. Answer the questions,
-          submit, and get an instant score with a worked explanation for every problem. Each new test
-          pulls fresh, randomized questions.
-        </p>
+    <div className="mx-auto max-w-3xl px-4 sm:px-5 pt-6 pb-16">
+      <Card>
+        <CardContent className="pt-6">
+          <span className="inline-block rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 mb-3">
+            Digital SAT · Practice
+          </span>
+          <h1 className="text-3xl font-semibold mb-1.5">SAT Practice Test</h1>
+          <p className="text-slate-500 mb-6">
+            A full timed practice run with Reading &amp; Writing and Math sections. Answer the questions,
+            submit, and get an instant score with a worked explanation for every problem. Each new test
+            pulls fresh, randomized questions.
+          </p>
 
-        <label className={styles.field} htmlFor="student-name">Student name</label>
-        <input
-          id="student-name"
-          className={styles.input}
-          type="text"
-          value={name}
-          placeholder="Type your name to begin"
-          autoComplete="off"
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && onStart()}
-        />
+          <Label className="block text-sm font-semibold" htmlFor="student-name">Student name</Label>
+          <Input
+            id="student-name"
+            type="text"
+            value={name}
+            placeholder="Type your name to begin"
+            autoComplete="off"
+            className="my-1.5 mb-[18px]"
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onStart()}
+          />
 
-        <label className={styles.field}>Test length</label>
-        <div className={styles.btnRow} style={{ marginBottom: 18 }}>
-          <button
-            className={`${styles.btnGhost} ${testLength === 'short' ? styles.selectedOpt : ''}`}
-            onClick={() => setTestLength('short')}
-          >
-            Quick (10 + 10, ~25 min)
-          </button>
-          <button
-            className={`${styles.btnGhost} ${testLength === 'full' ? styles.selectedOpt : ''}`}
-            onClick={() => setTestLength('full')}
-          >
-            Full sections (all questions)
-          </button>
-        </div>
+          <Label className="block text-sm font-semibold">Test length</Label>
+          <div className="flex flex-wrap gap-2.5 mt-2 mb-[18px]">
+            <Button
+              variant="secondary"
+              className={cn(testLength === 'short' ? 'ring-2 ring-blue-500 bg-blue-50' : '')}
+              onClick={() => setTestLength('short')}
+            >
+              Quick (10 + 10, ~25 min)
+            </Button>
+            <Button
+              variant="secondary"
+              className={cn(testLength === 'full' ? 'ring-2 ring-blue-500 bg-blue-50' : '')}
+              onClick={() => setTestLength('full')}
+            >
+              Full sections (all questions)
+            </Button>
+          </div>
 
-        <div className={styles.btnRow}>
-          <button className={styles.btnPrimary} onClick={onStart}>Start Test</button>
-        </div>
-        <p className={styles.note}>
-          Tip: the timer counts down per section, just like the real SAT. When time runs out, the
-          section auto-advances.
-        </p>
-      </div>
+          <div className="flex flex-wrap gap-2.5 mt-2">
+            <Button onClick={onStart}>Start Test</Button>
+          </div>
+          <p className="text-sm text-slate-500 mt-3">
+            Tip: the timer counts down per section, just like the real SAT. When time runs out, the
+            section auto-advances.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

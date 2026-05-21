@@ -2,7 +2,6 @@
 
 import { LETTERS } from '@/app/lib/test';
 import type { Question } from '@/app/lib/questions';
-import styles from '@/app/SatPractice.module.css';
 
 interface ReviewItemProps {
   question: Question;
@@ -15,39 +14,43 @@ interface ReviewItemProps {
 export function ReviewItem({ question, chosenIndex }: ReviewItemProps) {
   const isCorrect = chosenIndex === question.answerIndex;
   return (
-    <div className={styles.reviewQ}>
-      <div className={styles.qMeta}>
+    <div className="border-t border-slate-200 pt-4 mt-4 first:border-t-0 first:pt-0 first:mt-0">
+      <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">
         {question.skill}{' '}
         {chosenIndex === null ? (
-          <span className={`${styles.tag} ${styles.tagSkip}`}>Skipped</span>
+          <span className="inline-block ml-2 rounded-full px-2 py-0.5 text-xs font-semibold bg-slate-200 text-slate-700">Skipped</span>
         ) : isCorrect ? (
-          <span className={`${styles.tag} ${styles.tagOk}`}>Correct</span>
+          <span className="inline-block ml-2 rounded-full px-2 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-700">Correct</span>
         ) : (
-          <span className={`${styles.tag} ${styles.tagNo}`}>Incorrect</span>
+          <span className="inline-block ml-2 rounded-full px-2 py-0.5 text-xs font-semibold bg-red-100 text-red-700">Incorrect</span>
         )}
       </div>
-      {question.passage && <div className={styles.passage}>{question.passage}</div>}
-      <div className={styles.prompt}>{question.prompt}</div>
-      <div className={styles.ansLine}>
+      {question.passage && (
+        <div className="bg-slate-50 border-l-4 border-blue-500 rounded-md p-4 mb-4 whitespace-pre-wrap">
+          {question.passage}
+        </div>
+      )}
+      <div className="text-lg font-semibold mb-4">{question.prompt}</div>
+      <div className="text-sm mt-2">
         Your answer:{' '}
         {chosenIndex === null ? (
           <i>none</i>
         ) : (
-          <span className={isCorrect ? styles.correct : styles.wrong}>
+          <span className={isCorrect ? 'text-emerald-700 font-semibold' : 'text-red-700 font-semibold'}>
             {LETTERS[chosenIndex]}. {question.choices[chosenIndex]}
           </span>
         )}
       </div>
       {!isCorrect && chosenIndex !== null && (
-        <div className={styles.ansLine}>
+        <div className="text-sm mt-2">
           Correct answer:{' '}
-          <span className={styles.correct}>
+          <span className="text-emerald-700 font-semibold">
             {LETTERS[question.answerIndex]}. {question.choices[question.answerIndex]}
           </span>
         </div>
       )}
-      <div className={styles.explain}>
-        <b>Why:</b> <span dangerouslySetInnerHTML={{ __html: question.explanation }} />
+      <div className="mt-3 text-sm text-slate-700">
+        <b className="text-blue-700">Why:</b> <span dangerouslySetInnerHTML={{ __html: question.explanation }} />
       </div>
     </div>
   );

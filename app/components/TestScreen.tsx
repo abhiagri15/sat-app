@@ -4,7 +4,6 @@ import type { TestSection } from '@/app/lib/test';
 import { TopBar } from './TopBar';
 import { QuestionView } from './QuestionView';
 import { QuestionNavigator } from './QuestionNavigator';
-import styles from '@/app/SatPractice.module.css';
 
 interface TestScreenProps {
   section: TestSection;
@@ -37,7 +36,7 @@ export function TestScreen(props: TestScreenProps) {
         studentName={studentName}
         remaining={remaining}
       />
-      <div className={styles.wrap}>
+      <div className="mx-auto max-w-3xl px-4 sm:px-5 pt-6 pb-16">
         <QuestionView
           section={{ name: section.name }}
           question={question}

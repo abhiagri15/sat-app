@@ -68,7 +68,6 @@ export function useTestSession(): TestSession {
         if (next[secIdx] > 0) next[secIdx] -= 1;
         if (next[secIdx] <= 0) {
           // Defer the advance to avoid setState mid-render of the parent tree.
-          // eslint-disable-next-line @typescript-eslint/no-use-before-define
           setTimeout(() => handleTimeUp(), 0);
         }
         return next;

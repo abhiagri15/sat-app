@@ -2,7 +2,8 @@
 
 import type { Test, Results } from '@/app/lib/test';
 import { ReviewItem } from './ReviewItem';
-import styles from '@/app/SatPractice.module.css';
+import { Button } from '@/app/components/ui/button';
+import { Card, CardContent } from '@/app/components/ui/card';
 
 interface ResultsScreenProps {
   test: Test;
@@ -18,44 +19,50 @@ export function ResultsScreen({
 }: ResultsScreenProps) {
   const { perSection, pct, scaled } = results;
   return (
-    <div className={styles.wrap}>
-      <div className={styles.card}>
-        <span className={styles.pill}>{test.name}</span>
-        <h1 className={styles.h1}>Your results</h1>
-        <div className={styles.scorebox}>
-          <div className={styles.big}>{scaled}</div>
-          <div className={styles.subText}>Estimated SAT score (400–1600)</div>
-        </div>
-        <div className={styles.bar}><span style={{ width: `${Math.round(pct * 100)}%` }} /></div>
-        <div className={styles.breakdown}>
-          {perSection.map((s) => (
-            <div key={s.name} className={styles.stat}>
-              <div className={styles.statN}>{s.correct}/{s.total}</div>
-              <div className={styles.statL}>{s.name}</div>
-            </div>
-          ))}
-          <div className={styles.stat}>
-            <div className={styles.statN}>{Math.round(pct * 100)}%</div>
-            <div className={styles.statL}>Overall correct</div>
+    <div className="mx-auto max-w-3xl px-4 sm:px-5 pt-6 pb-16">
+      <Card>
+        <CardContent className="pt-6">
+          <span className="inline-block rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 mb-3">
+            {test.name}
+          </span>
+          <h1 className="text-3xl font-semibold mb-1.5">Your results</h1>
+          <div className="text-center py-2 pb-4">
+            <div className="text-6xl font-extrabold text-blue-600 leading-none">{scaled}</div>
+            <div className="text-slate-500 mt-1.5">Estimated SAT score (400–1600)</div>
           </div>
-        </div>
-        <div className={styles.btnRow}>
-          <button className={styles.btnPrimary} onClick={onNewTest}>Start a New Test</button>
-          <button className={styles.btnGhost} onClick={onToggleReview}>
-            {showReview ? 'Hide full review' : 'Show full review'}
-          </button>
-        </div>
-        <p className={styles.note}>
-          Scaled score is an approximation based on percent correct, for practice motivation only. Focus
-          on the explanations below to learn from each question.
-        </p>
-      </div>
+          <div className="h-3 rounded-full bg-slate-200 overflow-hidden my-4 mb-1.5">
+            <span className="block h-full bg-blue-600" style={{ width: `${Math.round(pct * 100)}%` }} />
+          </div>
+          <div className="flex flex-wrap gap-3.5 my-4">
+            {perSection.map((s) => (
+              <div key={s.name} className="bg-slate-50 rounded-md px-4 py-2.5 text-center min-w-[120px]">
+                <div className="text-2xl font-bold">{s.correct}/{s.total}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{s.name}</div>
+              </div>
+            ))}
+            <div className="bg-slate-50 rounded-md px-4 py-2.5 text-center min-w-[120px]">
+              <div className="text-2xl font-bold">{Math.round(pct * 100)}%</div>
+              <div className="text-xs text-slate-500 mt-0.5">Overall correct</div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2.5 mt-2">
+            <Button onClick={onNewTest}>Start a New Test</Button>
+            <Button variant="secondary" onClick={onToggleReview}>
+              {showReview ? 'Hide full review' : 'Show full review'}
+            </Button>
+          </div>
+          <p className="text-sm text-slate-500 mt-3">
+            Scaled score is an approximation based on percent correct, for practice motivation only. Focus
+            on the explanations below to learn from each question.
+          </p>
+        </CardContent>
+      </Card>
 
       {showReview && (
-        <div style={{ marginTop: 18 }}>
+        <div className="mt-[18px]">
           {test.sections.map((sec, si) => (
             <div key={si}>
-              <h2 className={styles.h2} style={{ margin: '22px 0 12px' }}>
+              <h2 className="text-base font-semibold my-[22px] mb-3">
                 {sec.name} — review
               </h2>
               {sec.questions.map((q, qi) => (
