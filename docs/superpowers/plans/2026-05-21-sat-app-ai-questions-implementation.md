@@ -341,7 +341,7 @@ Three commits. After Chunk 1 the pool tables + draw RPC exist, the AI library (p
     answer_index: q.answerIndex,
     explanation: q.explanation,
     source: 'seed' as const,
-    dedup_hash: dedupHash(q.prompt, q.choices),
+    dedup_hash: dedupHash(q.prompt, q.choices, q.passage),
   }));
 
   const { error } = await admin
@@ -502,7 +502,7 @@ Two commits. After Chunk 2 the generation endpoint exists (secret-protected, run
           answer_index: q.answerIndex,
           explanation: q.explanation,
           source: 'ai',
-          dedup_hash: dedupHash(q.prompt, q.choices),
+          dedup_hash: dedupHash(q.prompt, q.choices, q.passage),
         });
         if (error) {
           if (error.code === '23505') summary.rejectedDuplicate++;
