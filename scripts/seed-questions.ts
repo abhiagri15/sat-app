@@ -25,13 +25,20 @@ const rows = BANK.map((q) => ({
   dedup_hash: dedupHash(q.prompt, q.choices, q.passage),
 }));
 
-const { error } = await admin
-  .schema('sat')
-  .from('questions')
-  .upsert(rows, { onConflict: 'id' });
+// Wrapped in an async IIFE — tsx transforms this script as CommonJS (the project
+// package.json has no "type":"module"), which disallows top-level await.
+void (async () => {
+  const { error } = await admin
+    .schema('sat')
+    .from('questions')
+    .upsert(rows, { onConflict: 'id' });
 
-if (error) {
-  console.error('seed failed:', error);
+  if (error) {
+    console.error('seed failed:', error);
+    process.exit(1);
+  }
+  console.log(`seeded ${rows.length} questions into sat.questions`);
+})().catch((e) => {
+  console.error('seed failed:', e);
   process.exit(1);
-}
-console.log(`seeded ${rows.length} questions into sat.questions`);
+});
