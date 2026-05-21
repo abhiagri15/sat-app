@@ -22,7 +22,8 @@ That scope is too large for a single spec. It is decomposed into six sub-project
 | 3 | Auth | Supabase auth: email signup + Google OAuth. `sat.profiles` table, auto-created on first login. Protected routes. |
 | 4 | Persistence | `sat.test_attempts` + `sat.attempt_responses` tables; save the full attempt at test submission; "History" list on `/dashboard`. |
 | 5 | Analytics | Score-over-time chart, per-section breakdown, per-skill accuracy. |
-| 6 | Feedback / insights | Auto-generated recommendations derived from analytics. |
+| 6 | Admin views | `/admin/users` listing + per-user history drill-down for the `admin` role (defined by the Auth sub-project on `sat.profiles.role`). Tenants in scope = individual users; org/multi-tenant model is explicitly out. |
+| 7 | Feedback / insights | Auto-generated recommendations derived from analytics. |
 
 Foundation is intentionally narrow: it makes no functional changes to the user-facing test. Its purpose is to land the architecture so the next five sub-projects can be built incrementally.
 
@@ -33,7 +34,7 @@ Foundation is intentionally narrow: it makes no functional changes to the user-f
 ### 2.1 In scope
 
 - Package manager: **npm → pnpm**.
-- Framework bump: **Next.js 14 → 15**.
+- Framework bump: **Next.js 14 → 15**, paired with **React 18 → 19**. Next 15 admits React 18.2+ in its peer range, so React 19 is a deliberate choice to match the OneReal stack (D1), not a strict requirement of Next 15.
 - Language: **plain JavaScript → TypeScript** with `strict: true`.
 - UI primitives: **shadcn/ui** initialized; generate base components (`button`, `card`, `input`, `label`, `dialog`). **Tailwind CSS** replaces `SatPractice.module.css`.
 - Libraries staged (installed; minimal use in Foundation): **TanStack Query** (a `<QueryClientProvider>` is wired in `layout.tsx`), **react-hook-form** + **zod** (installed, no consumers yet — Auth sub-project uses them).
@@ -75,7 +76,7 @@ Each decision was made through brainstorming with the stakeholder. The rationale
 
 | # | Decision | Rationale |
 |---|---|---|
-| D1 | **Stack matches OneReal:** Next.js 15 + TypeScript + pnpm + `@supabase/ssr` + shadcn/ui + TanStack Query + react-hook-form + zod. | The stakeholder already runs this stack in another personal project (OneReal). Reusing the pattern minimizes onboarding cost, makes auth a known quantity, and lets future contributors share mental models across projects. |
+| D1 | **Stack matches OneReal:** Next.js 15 + **React 19** + TypeScript + pnpm + `@supabase/ssr` + shadcn/ui + TanStack Query + react-hook-form + zod. (Next.js 15's peer range broadens to admit React 19 alongside React 18.2+. We adopt React 19 to match the OneReal stack target, not because Next 15 strictly requires it.) | The stakeholder already runs this stack in another personal project (OneReal). Reusing the pattern minimizes onboarding cost, makes auth a known quantity, and lets future contributors share mental models across projects. |
 | D2 | **Reuse the PropLedger Supabase project** (`falgykkspbtrwdcchayi`) rather than create a dedicated SAT project. SAT objects live under a dedicated `sat` PostgreSQL schema to keep namespaces clean. | Stakeholder preference. The schema namespacing mitigates the coupling concern (backups, RLS, drop-the-whole-schema escape hatch). PropLedger is accessible via the claude.ai Supabase MCP, simplifying migrations. |
 | D3 | **In-place upgrade of `sat-app/`** rather than a greenfield rewrite or monorepo restructure. | Smallest setup cost. The current app has so little surface that in-place conversion is faster than copying logic to a new repo. Monorepo deferred until a second app (e.g., admin dashboard) is actually needed. |
 | D4 | **Foundation ships on the hardcoded `BANK`.** AI generation is its own sub-project. | Decoupling stack migration from content migration. Lets us verify the new stack against deterministic content before introducing AI variability. The `BANK` is preserved long-term as the seed pool and offline-dev fallback. |
@@ -96,7 +97,7 @@ These were settled during brainstorming but apply to sub-projects #2–#6, not F
 | Deduplication: normalized-text exact-match hash of `(prompt + choices)`, lowercased, whitespace-stripped. | #2 |
 | Explanation generated with the question and stored once on `sat.questions.explanation`. Same explanation shown to every user. | #2 |
 | `BANK` seeds `sat.questions` on the first AI-sub-project migration. After seeding, `BANK` survives in code as a fallback fixture when the pool is empty AND the AI provider is failing. | #2 |
-| Auth via Supabase: email signup + Google OAuth. `sat.profiles` auto-created on first login with FK to `auth.users(id)`. | #3 |
+| Auth via Supabase: email signup + Google OAuth. `sat.profiles` auto-created on first login with FK to `auth.users(id)`, plus a `role text` column (`'student' \| 'admin'`, default `'student'`). Admin promotion via direct DB update for v1. | #3 |
 | Persistence captures **per-question responses** (`sat.attempt_responses`), not just aggregate scores. | #4 |
 
 ---
