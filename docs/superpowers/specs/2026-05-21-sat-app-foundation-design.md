@@ -197,7 +197,7 @@ The migration is sequenced so the app remains runnable at each step boundary (or
 
 - Create `tsconfig.json` with strict mode and App Router-aware compiler options.
 - Install `typescript`, `@types/react`, `@types/react-dom`, `@types/node`.
-- **Sub-steps 4.1 through 4.8 below are ONE atomic commit**, not eight separate commits. They cross-reference each other (e.g., renaming `answer` → `answerIndex` in `questions.ts` breaks every reader of that field until those readers are also rewritten; the decomposition deletes `SatPractice.jsx` while creating the new component files). Attempting to land them as separate commits leaves the app non-runnable mid-sequence. Within the commit, perform the work in this order so the implementer's edit stream is coherent:
+- **Sub-steps 4.1 through 4.9 below are ONE atomic commit**, not nine separate commits. They cross-reference each other (e.g., renaming `answer` → `answerIndex` in `questions.ts` breaks every reader of that field until those readers are also rewritten; the decomposition deletes `SatPractice.jsx` while creating the new component files). Attempting to land them as separate commits leaves the app non-runnable mid-sequence. Within the commit, perform the work in this order so the implementer's edit stream is coherent:
   1. `next.config.js` → `next.config.ts`
   2. `app/layout.js` → `app/layout.tsx`
   3. `app/questions.js` → `app/lib/questions.ts`. Add `Question` interface, rename `answer` → `answerIndex`, add `source: 'seed'` to every entry, assign stable `id` strings. **Id format:** `seed-rw-001` … `seed-rw-017` for RW entries, `seed-math-001` … `seed-math-017` for Math entries, both numbered in the order they appear in the current `BANK` array. Three-digit zero-padding. Once committed, these ids are immutable — the AI sub-project's seeding step (#2) upserts by id, and renumbering later would orphan persisted attempt responses (sub-project #4) that reference them.
@@ -454,7 +454,7 @@ Application path (preferred order):
 |---|---|---|---|
 | **Component decomposition (Step 4) silently changes timer or scoring behavior.** | Medium | High — invalidates the migration | Keep `useTestSession` as discrete `useState` calls (no reducer). Preserve `useEffect` deps `[screen, secIdx]`. Preserve `setTimeout(handleTimeUp, 0)` defer. Final verification (Step 9) includes a full manual end-to-end test. |
 | **Tailwind cutover (Step 6) introduces visual regressions stakeholder didn't anticipate.** | High | Low — purely cosmetic | Acknowledged explicitly in scope (D6). Behavior is unchanged. If pixel-parity is later requested, it becomes its own sub-project. |
-| **Schema migration on the shared PropLedger DB causes unintended side effects on the PropLedger app.** | Low | High — touches production data of an unrelated project | Migration is purely additive: creates a new isolated schema, revokes privileges, no tables. Apply via Supabase branch first if extra caution is wanted (stakeholder noted as optional during brainstorming). |
+| **Schema migration on the shared PropLedger DB causes unintended side effects on the PropLedger app.** | Low | High — touches production data of an unrelated project | Migration is purely additive (creates an isolated schema, revokes privileges, no tables). Step 8 applies it via a Supabase **preview branch by default**, with direct MCP/CLI application only as a fallback if branching is unavailable on the project's tier. |
 | **Supabase CLI link state lost after `git clone` or worktree creation.** | Medium | Low — easily fixed | `supabase/.temp/` is gitignored. Documented in repo README that a fresh checkout needs `pnpm dlx supabase link --project-ref falgykkspbtrwdcchayi`. Aligns with the OneReal worktree gotcha noted in `onereal_project.md`. |
 | **`dangerouslySetInnerHTML` in `ReviewItem` becomes an XSS vector once questions come from AI (sub-project #2).** | Low (in Foundation) / Medium (later) | High once user-generated content enters | Out of scope for Foundation. Flagged here for the AI sub-project: either sanitize at insert time, or move to a constrained renderer (e.g., `react-markdown` with an allowlist), or strip HTML and render plain text + a small allowed subset. |
 | **Next.js 15 surfaces an unexpected breaking change.** | Low | Medium | Step 3 is isolated; if a blocker appears we hold at Next 14, since the Supabase SSR helpers support both. |
@@ -480,6 +480,8 @@ Application path (preferred order):
 - [ ] Question navigator highlights answered questions and the current question.
 - [ ] Submit-section confirmation appears; canceling does not advance; confirming does.
 - [ ] Results screen shows a scaled score in the 400–1600 range that matches the formula `round((400 + correct/total * 1200) / 10) * 10`.
+- [ ] Worked-example sanity check: a completed Quick test with exactly 10/20 correct displays scaled score `1000`.
+- [ ] `app/lib/supabase/server.ts` type-checks cleanly against Next 15's async `cookies()` signature (no unawaited-Promise errors).
 - [ ] "Show full review" reveals every question with the user's pick, the correct answer (when wrong), and an explanation that renders `<b>` as bold.
 - [ ] "Start a New Test" returns to the StartScreen with state reset and reshuffles questions on next start.
 - [ ] `/dashboard` renders the placeholder and the server logs reflect the successful Supabase smoke test.
