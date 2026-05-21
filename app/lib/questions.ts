@@ -396,3 +396,37 @@ export const SECTION_CONFIG = {
 
 export const SECTION_ORDER = ['rw', 'math'] as const;
 export type SectionKey = (typeof SECTION_ORDER)[number];
+
+// The skill taxonomy the AI generator targets — the distinct skills present
+// in BANK. Keep in sync with BANK's `skill` values.
+export const SKILLS: Record<SectionKey, string[]> = {
+  rw: [
+    'Boundaries (Modifiers)',
+    'Boundaries (Punctuation)',
+    'Central Ideas',
+    'Command of Evidence',
+    'Form & Structure (Verbs)',
+    'Pronoun Agreement',
+    'Rhetorical Synthesis',
+    'Subject-Verb Agreement',
+    'Transitions',
+    'Words in Context',
+  ],
+  math: [
+    'Exponential Growth',
+    'Exponents',
+    'Functions',
+    'Geometry (Area)',
+    'Geometry (Triangles)',
+    'Inequalities',
+    'Linear Equations',
+    'Linear Functions',
+    'Percentages',
+    'Probability',
+    'Quadratics',
+    'Ratios & Proportions',
+    'Slope & Lines',
+    'Statistics (Mean)',
+    'Systems of Equations',
+  ],
+};
