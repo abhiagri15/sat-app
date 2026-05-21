@@ -7,6 +7,7 @@ const PUBLIC_PATHS = [
   '/forgot-password',
   '/reset-password',
   '/auth/callback',
+  '/api/admin/generate-questions',
 ];
 
 export async function middleware(request: NextRequest) {
