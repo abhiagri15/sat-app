@@ -3,19 +3,16 @@
 import type { TestLength } from '@/app/lib/test';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
-import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
 import { cn } from '@/app/lib/utils';
 
 interface StartScreenProps {
-  name: string;
-  setName: (s: string) => void;
   testLength: TestLength;
   setTestLength: (l: TestLength) => void;
   onStart: () => void;
 }
 
-export function StartScreen({ name, setName, testLength, setTestLength, onStart }: StartScreenProps) {
+export function StartScreen({ testLength, setTestLength, onStart }: StartScreenProps) {
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-5 pt-6 pb-16">
       <Card>
@@ -29,18 +26,6 @@ export function StartScreen({ name, setName, testLength, setTestLength, onStart 
             submit, and get an instant score with a worked explanation for every problem. Each new test
             pulls fresh, randomized questions.
           </p>
-
-          <Label className="block text-sm font-semibold" htmlFor="student-name">Student name</Label>
-          <Input
-            id="student-name"
-            type="text"
-            value={name}
-            placeholder="Type your name to begin"
-            autoComplete="off"
-            className="my-1.5 mb-[18px]"
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && onStart()}
-          />
 
           <Label className="block text-sm font-semibold">Test length</Label>
           <div className="flex flex-wrap gap-2.5 mt-2 mb-[18px]">

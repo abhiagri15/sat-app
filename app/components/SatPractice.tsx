@@ -5,14 +5,12 @@ import { StartScreen } from './StartScreen';
 import { TestScreen } from './TestScreen';
 import { ResultsScreen } from './ResultsScreen';
 
-export default function SatPractice() {
-  const s = useTestSession();
+export default function SatPractice({ studentName }: { studentName: string }) {
+  const s = useTestSession(studentName);
 
   if (s.screen === 'start') {
     return (
       <StartScreen
-        name={s.name}
-        setName={s.setName}
         testLength={s.testLength}
         setTestLength={s.setTestLength}
         onStart={s.start}

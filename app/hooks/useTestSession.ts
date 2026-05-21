@@ -34,9 +34,9 @@ export interface TestSession {
   results: Results | null;
 }
 
-export function useTestSession(): TestSession {
+export function useTestSession(initialName = ''): TestSession {
   const [screen, setScreen] = useState<Screen>('start');
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName);
   const [testLength, setTestLength] = useState<TestLength>('short');
 
   const [test, setTest] = useState<Test | null>(null);
