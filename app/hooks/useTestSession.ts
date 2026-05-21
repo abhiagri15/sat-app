@@ -8,6 +8,7 @@ import {
   type Test,
   type TestLength,
 } from '@/app/lib/test';
+import { drawTestQuestions } from '@/app/lib/pool';
 
 export type Screen = 'start' | 'test' | 'results';
 
@@ -25,6 +26,7 @@ export interface TestSession {
   remaining: number[];
   showReview: boolean;
   toggleReview: () => void;
+  loading: boolean;
   // actions
   start: () => void;
   selectChoice: (i: number) => void;
@@ -45,6 +47,7 @@ export function useTestSession(initialName = ''): TestSession {
   const [responses, setResponses] = useState<(number | null)[][]>([]);
   const [remaining, setRemaining] = useState<number[]>([]);
   const [showReview, setShowReview] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -95,13 +98,23 @@ export function useTestSession(initialName = ''): TestSession {
     setScreen('results');
   };
 
-  const start = () => {
+  const start = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
       window.alert('Please enter a name to start.');
       return;
     }
-    const t = buildTest(trimmed, testLength);
+    setLoading(true);
+    let t: Test;
+    try {
+      const drawn = await drawTestQuestions(testLength);
+      if (drawn.length === 0) throw new Error('empty pool draw');
+      t = buildTest(trimmed, testLength, drawn);
+    } catch (e) {
+      console.error('[useTestSession] pool draw failed; using BANK fallback', e);
+      t = buildTest(trimmed, testLength);
+    }
+    setLoading(false);
     setTest(t);
     setResponses(t.sections.map((s) => new Array(s.questions.length).fill(null)));
     setRemaining(t.sections.map((s) => s.timeLimit));
@@ -148,7 +161,7 @@ export function useTestSession(initialName = ''): TestSession {
   return {
     screen, name, setName, testLength, setTestLength,
     test, secIdx, qIdx, responses, remaining,
-    showReview, toggleReview,
+    showReview, toggleReview, loading,
     start, selectChoice, goToQuestion, submitSection, newTest, results,
   };
 }

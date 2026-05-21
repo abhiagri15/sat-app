@@ -390,8 +390,8 @@ export const BANK: Question[] = [
 ];
 
 export const SECTION_CONFIG = {
-  rw: { name: 'Reading & Writing', shortCount: 10, secsPerQ: 90 },
-  math: { name: 'Math', shortCount: 10, secsPerQ: 105 },
+  rw: { name: 'Reading & Writing', shortCount: 10, fullCount: 27, secsPerQ: 90 },
+  math: { name: 'Math', shortCount: 10, fullCount: 22, secsPerQ: 105 },
 } as const;
 
 export const SECTION_ORDER = ['rw', 'math'] as const;
@@ -430,3 +430,30 @@ export const SKILLS: Record<SectionKey, string[]> = {
     'Systems of Equations',
   ],
 };
+
+// Maps a sat.questions row (snake_case, choices as jsonb) to the Question type.
+export function rowToQuestion(row: {
+  id: string;
+  section: string;
+  skill: string;
+  passage: string | null;
+  prompt: string;
+  choices: unknown;
+  answer_index: number;
+  explanation: string;
+  source: string;
+}): Question {
+  return {
+    id: row.id,
+    section: row.section as SectionKey,
+    skill: row.skill,
+    passage: row.passage ?? undefined,
+    prompt: row.prompt,
+    // `choices` is jsonb — guard against a malformed row so a bad value
+    // surfaces as an empty-choice question rather than crashing mid-render.
+    choices: Array.isArray(row.choices) ? (row.choices as string[]) : [],
+    answerIndex: row.answer_index,
+    explanation: row.explanation,
+    source: row.source as 'seed' | 'ai',
+  };
+}

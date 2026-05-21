@@ -14,6 +14,7 @@ export default function SatPractice({ studentName }: { studentName: string }) {
         testLength={s.testLength}
         setTestLength={s.setTestLength}
         onStart={s.start}
+        loading={s.loading}
       />
     );
   }

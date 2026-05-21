@@ -10,9 +10,10 @@ interface StartScreenProps {
   testLength: TestLength;
   setTestLength: (l: TestLength) => void;
   onStart: () => void;
+  loading: boolean;
 }
 
-export function StartScreen({ testLength, setTestLength, onStart }: StartScreenProps) {
+export function StartScreen({ testLength, setTestLength, onStart, loading }: StartScreenProps) {
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-5 pt-6 pb-16">
       <Card>
@@ -41,12 +42,14 @@ export function StartScreen({ testLength, setTestLength, onStart }: StartScreenP
               className={cn(testLength === 'full' ? 'ring-2 ring-blue-500 bg-blue-50' : '')}
               onClick={() => setTestLength('full')}
             >
-              Full sections (all questions)
+              Full (27 + 22)
             </Button>
           </div>
 
           <div className="flex flex-wrap gap-2.5 mt-2">
-            <Button onClick={onStart}>Start Test</Button>
+            <Button onClick={onStart} disabled={loading}>
+              {loading ? 'Building your test…' : 'Start Test'}
+            </Button>
           </div>
           <p className="text-sm text-slate-500 mt-3">
             Tip: the timer counts down per section, just like the real SAT. When time runs out, the
