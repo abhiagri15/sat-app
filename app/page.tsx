@@ -1,4 +1,4 @@
-import SatPractice from "./SatPractice";
+import SatPractice from '@/app/components/SatPractice';
 
 export default function Home() {
   return <SatPractice />;
