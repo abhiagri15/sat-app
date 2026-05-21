@@ -50,7 +50,12 @@ export function ReviewItem({ question, chosenIndex }: ReviewItemProps) {
         </div>
       )}
       <div className="mt-3 text-sm text-slate-700">
-        <b className="text-blue-700">Why:</b> <span dangerouslySetInnerHTML={{ __html: question.explanation }} />
+        <b className="text-blue-700">Why:</b>{' '}
+        {question.source === 'seed' ? (
+          <span dangerouslySetInnerHTML={{ __html: question.explanation }} />
+        ) : (
+          <span>{question.explanation}</span>
+        )}
       </div>
     </div>
   );
