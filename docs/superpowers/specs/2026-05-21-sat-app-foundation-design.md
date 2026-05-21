@@ -9,7 +9,7 @@
 
 ## 1. Context: where this fits in the larger product
 
-The existing `sat-app/` is a static one-page Next.js 14 + plain-JS application: a name field, a timed SAT practice test sampled from a hardcoded `BANK` of ~30 questions, an instant results screen with worked explanations. No authentication, no persistence, no analytics.
+The existing `sat-app/` is a static one-page Next.js 14 + plain-JS application: a name field, a timed SAT practice test sampled from a hardcoded `BANK` of 34 questions (17 Reading & Writing, 17 Math), an instant results screen with worked explanations. No authentication, no persistence, no analytics.
 
 The product goal is a full SAT-prep platform for high-school students in the US: accounts (email + Google OAuth via Supabase), AI-generated SAT-style questions with self-verified quality, persisted attempt history and per-question responses, analytics on per-skill mastery and score-over-time, and feedback/insights derived from that data.
 
@@ -52,7 +52,7 @@ Foundation is intentionally narrow: it makes no functional changes to the user-f
 - **No AI integration.** No provider adapters, no pool top-up, no `SAT_AI_PROVIDER` env var.
 - **No data persistence of any kind.** Test results remain in-memory only; refresh wipes them, identical to today.
 - **No analytics or feedback features.**
-- **No new question content.** The 30 hardcoded `BANK` items continue as the sole question source.
+- **No new question content.** The existing 34 hardcoded `BANK` items continue as the sole question source.
 - **No test runner or test suites.** Verification is `pnpm type-check` + `pnpm build` + manual click-through. Aligns with OneReal's convention (per `onereal_project.md`: "No automated test suite. The project's gate is `pnpm type-check`.").
 
 ### 2.3 Acceptance criteria
@@ -81,7 +81,7 @@ Each decision was made through brainstorming with the stakeholder. The rationale
 | D4 | **Foundation ships on the hardcoded `BANK`.** AI generation is its own sub-project. | Decoupling stack migration from content migration. Lets us verify the new stack against deterministic content before introducing AI variability. The `BANK` is preserved long-term as the seed pool and offline-dev fallback. |
 | D5 | **Component decomposition: three screen components plus four sub-components** (TopBar, QuestionView, QuestionNavigator, ReviewItem). State lives in a single `useTestSession` hook that wraps `useState` calls — **not a reducer**, **not a context provider**. | Closest to the current code, fastest to verify behavior parity, no over-engineering. A reducer or context can be introduced later if state grows. |
 | D6 | **Tailwind + shadcn cutover happens inside Foundation**, not in a separate sub-project. `SatPractice.module.css` is deleted. | Every component file is being touched during JS→TS conversion anyway; doing the className rewrite in the same pass avoids a second visit. Accepts a known visual divergence from the pre-migration UI. |
-| D7 | **No tables in Foundation.** Only `CREATE SCHEMA sat;` and the deny-by-default RLS posture. | Tables couple naturally to the sub-project that uses them. `sat.profiles` requires `auth.users` (Auth sub-project); `sat.questions` requires the AI sub-project's lifecycle; `sat.test_attempts` requires Persistence. Creating empty tables now would invite premature schema decisions. |
+| D7 | **No tables in Foundation.** Only `CREATE SCHEMA sat;` and the deny-by-default RLS posture. The 34 existing `BANK` items stay in code as `app/lib/questions.ts`. | Tables couple naturally to the sub-project that uses them. `sat.profiles` requires `auth.users` (Auth sub-project); `sat.questions` requires the AI sub-project's lifecycle; `sat.test_attempts` requires Persistence. Creating empty tables now would invite premature schema decisions. |
 | D8 | **No automated tests in Foundation.** Verification is type-check + manual browser click-through. | Matches OneReal convention. Adding a test runner expands Foundation's surface for no immediate functional payoff. Re-evaluate if a future sub-project needs unit tests for non-trivial pure logic (e.g., AI dedup hashing, score aggregation). |
 
 ### Decisions deferred to later sub-projects (recorded for traceability)
@@ -175,9 +175,9 @@ sat-app/
 
 The migration is sequenced so the app remains runnable at each step boundary (or, in worst case, broken for a single commit). Each numbered step is one logical commit.
 
-### Step 1 — Initialize git
+### Step 1 — Commit the JS baseline
 
-`sat-app/` is not currently a git repo. `git init`, add a `.gitignore` if missing (verify `node_modules`, `.env.local`, `.next/`, `supabase/.temp/` are ignored), initial commit of the existing JS app. Tag `pre-ts-migration` so the final diff is reviewable.
+`sat-app/` is already a git repository on branch `main` with one commit (the commit of this spec). The existing JS source files (`app/SatPractice.jsx`, `app/questions.js`, `app/page.js`, `app/layout.js`, `app/globals.css`, `app/page.module.css`, `app/fonts/`, `package.json`, `next.config.js`, `jsconfig.json`, `README.md`, plus `.gitignore`) are present but untracked. Verify `.gitignore` covers `node_modules`, `.env.local`, `.next/`; append `supabase/.temp/` (not yet present — added in preparation for Step 8). Stage and commit all existing source files as the pre-migration baseline. Tag the resulting commit `pre-ts-migration` so the final diff against `post-foundation` (Step 9) is reviewable end-to-end.
 
 ### Step 2 — Switch package manager: npm → pnpm
 
@@ -193,19 +193,20 @@ The migration is sequenced so the app remains runnable at each step boundary (or
 - Resolve Next 15 deprecation warnings (App Router APIs are largely compatible; expect minor changes around `cookies()` / `headers()` returning Promises, but those don't apply to the current code).
 - Verify gameplay in the browser end-to-end.
 
-### Step 4 — Add TypeScript with strict mode
+### Step 4 — Add TypeScript and decompose (one atomic commit)
 
 - Create `tsconfig.json` with strict mode and App Router-aware compiler options.
 - Install `typescript`, `@types/react`, `@types/react-dom`, `@types/node`.
-- Convert files **one at a time**, each as its own commit, in this order:
+- **Sub-steps 4.1 through 4.8 below are ONE atomic commit**, not eight separate commits. They cross-reference each other (e.g., renaming `answer` → `answerIndex` in `questions.ts` breaks every reader of that field until those readers are also rewritten; the decomposition deletes `SatPractice.jsx` while creating the new component files). Attempting to land them as separate commits leaves the app non-runnable mid-sequence. Within the commit, perform the work in this order so the implementer's edit stream is coherent:
   1. `next.config.js` → `next.config.ts`
   2. `app/layout.js` → `app/layout.tsx`
-  3. `app/page.js` → `app/page.tsx`
-  4. `app/questions.js` → `app/lib/questions.ts` (add `Question` interface; rename `answer` → `answerIndex`; add `source: 'seed'` to every entry; assign stable `id` strings like `seed-rw-001`)
-  5. Extract pure helpers from `SatPractice.jsx` into `app/lib/test.ts` (`shuffle`, `shuffleChoices`, `buildTest`, `computeResults`, `fmtTime`, `LETTERS`, plus `Test`/`TestSection`/`Results` types). `buildTest` takes `bank: Question[]` as a parameter rather than importing `BANK` directly — this prepares the seam for the AI sub-project.
-  6. Extract `useTestSession` hook into `app/hooks/useTestSession.ts`. Internal state stays as discrete `useState` calls — no reducer.
-  7. Decompose UI into seven components under `app/components/`: `StartScreen.tsx`, `TestScreen.tsx`, `ResultsScreen.tsx`, `TopBar.tsx`, `QuestionView.tsx`, `QuestionNavigator.tsx`, `ReviewItem.tsx`.
-  8. Shrink `SatPractice.jsx` into `app/components/SatPractice.tsx` (~30 lines: call hook, switch on `screen`, render one of three screens).
+  3. `app/questions.js` → `app/lib/questions.ts`. Add `Question` interface, rename `answer` → `answerIndex`, add `source: 'seed'` to every entry, assign stable `id` strings. **Id format:** `seed-rw-001` … `seed-rw-017` for RW entries, `seed-math-001` … `seed-math-017` for Math entries, both numbered in the order they appear in the current `BANK` array. Three-digit zero-padding. Once committed, these ids are immutable — the AI sub-project's seeding step (#2) upserts by id, and renumbering later would orphan persisted attempt responses (sub-project #4) that reference them.
+  4. Extract pure helpers from `SatPractice.jsx` into `app/lib/test.ts` (`shuffle`, `shuffleChoices`, `buildTest`, `computeResults`, `fmtTime`, `LETTERS`, plus `Test`/`TestSection`/`Results` types). `buildTest` takes `bank: Question[]` as a parameter rather than importing `BANK` directly — this prepares the seam for the AI sub-project.
+  5. Extract `useTestSession` hook into `app/hooks/useTestSession.ts`. Internal state stays as discrete `useState` calls — no reducer.
+  6. Decompose UI into seven components under `app/components/`: `StartScreen.tsx`, `TestScreen.tsx`, `ResultsScreen.tsx`, `TopBar.tsx`, `QuestionView.tsx`, `QuestionNavigator.tsx`, `ReviewItem.tsx`.
+  7. Create the thin top-level `app/components/SatPractice.tsx` (~30 lines: call hook, switch on `screen`, render one of three screens).
+  8. `app/page.js` → `app/page.tsx`, importing from the new path `@/app/components/SatPractice`.
+  9. Delete the original `app/SatPractice.jsx` (its functionality is now spread across the new files).
 
 After Step 4, the app runs on TS but still uses the original CSS module.
 
@@ -233,12 +234,13 @@ After Step 4, the app runs on TS but still uses the original CSS module.
 
 ### Step 8 — Supabase clients + `sat` schema migration
 
+- Confirm `.gitignore` now lists `supabase/.temp/` (added in Step 1). If missing, append it before `pnpm dlx supabase init` creates that directory.
 - Install `@supabase/supabase-js`, `@supabase/ssr`.
 - Create `app/lib/supabase/client.ts` (browser client via `createBrowserClient`) and `app/lib/supabase/server.ts` (server client via `createServerClient` + `next/headers`).
-- Populate `.env.local` and commit `.env.example`:
+- Populate `.env.local` and commit `.env.example`. The `.env.example` includes the real PropLedger URL (it's a public DNS name, and `NEXT_PUBLIC_`-prefixed values are not secret) so a fresh clone has the project ref discoverable in-repo:
   ```
   NEXT_PUBLIC_SUPABASE_URL=https://falgykkspbtrwdcchayi.supabase.co
-  NEXT_PUBLIC_SUPABASE_ANON_KEY=<from Supabase dashboard>
+  NEXT_PUBLIC_SUPABASE_ANON_KEY=<paste anon key from Supabase dashboard>
   ```
 - `pnpm dlx supabase init` to create the `supabase/` workspace.
 - `pnpm dlx supabase link --project-ref falgykkspbtrwdcchayi` (will require the Supabase access token).
@@ -246,27 +248,31 @@ After Step 4, the app runs on TS but still uses the original CSS module.
   ```sql
   create schema if not exists sat;
 
-  revoke all on schema sat from anon, authenticated;
+  -- deny-by-default for Supabase roles AND the implicit PUBLIC role,
+  -- so future SECURITY DEFINER functions don't inherit EXECUTE accidentally.
+  revoke all on schema sat from anon, authenticated, public;
   grant usage on schema sat to anon, authenticated;
 
   alter default privileges in schema sat
-    revoke all on tables from anon, authenticated;
+    revoke all on tables from anon, authenticated, public;
   alter default privileges in schema sat
-    revoke all on sequences from anon, authenticated;
+    revoke all on sequences from anon, authenticated, public;
   alter default privileges in schema sat
-    revoke all on functions from anon, authenticated;
+    revoke all on functions from anon, authenticated, public;
   ```
-- Apply via `pnpm dlx supabase db push` OR via the claude.ai Supabase MCP (`mcp__claude_ai_Supabase__apply_migration`). PropLedger is MCP-accessible per `onereal_project.md`.
+- **Apply via a Supabase preview branch first** (the default safety move because the migration touches a shared production project): `pnpm dlx supabase branches create foundation-schema`, push migration, verify the `sat` schema exists on the branch, then merge to main with `pnpm dlx supabase branches merge`. If branching is unavailable on the project's tier, fall back to applying directly via the claude.ai Supabase MCP (`mcp__claude_ai_Supabase__apply_migration`) or `pnpm dlx supabase db push`. PropLedger is MCP-accessible per `onereal_project.md`.
 - Add a server-side `select 1` smoke call in `app/dashboard/page.tsx` (logs to server console; removed in Auth sub-project).
 
-### Step 9 — Final verification
+### Step 9 — Final verification and docs sync
 
-- `pnpm type-check` (no errors).
+- Update `README.md` to reflect the new stack: `pnpm install` / `pnpm dev` instead of npm; the new file paths (`app/components/SatPractice.tsx`, `app/lib/questions.ts`); the new `Question` shape (`answerIndex` not `answer`, `id` and `source` fields); a note that Vercel deploy still works zero-config. Update `CLAUDE.md` likewise if any of its claims have gone stale.
+- `pnpm type-check` (no errors). Spot-check `app/lib/supabase/server.ts` specifically for the Next 15 `cookies()` async-return shape — if `@supabase/ssr` is the current version, it handles this; if a downlevel version is pinned, the type-check will flag it here.
 - `pnpm lint` (no errors; ESLint config remains Next.js default unless an issue surfaces).
 - `pnpm build` (clean build).
 - `pnpm dev` and manual click-through:
   - Enter name; verify Quick and Full test-length options both build correctly.
-  - Run a complete Quick test from `/`. Verify timer counts down, color shifts at ≤120s (warn) and ≤30s (danger), auto-advance fires on zero, scoring matches a hand calculation, review screen renders explanations with bold formatting.
+  - Run a complete Quick test from `/`. Verify timer counts down, color shifts at ≤120s (warn) and ≤30s (danger), auto-advance fires on zero, review screen renders explanations with bold formatting.
+  - Scoring sanity check (worked example, used to validate the formula survived the refactor): finish a Quick test with exactly 10/20 correct → results screen must display scaled score `1000` (because `round((400 + 0.5 × 1200) / 10) × 10 = 1000`).
   - Visit `/dashboard`, confirm placeholder renders and server logs the Supabase smoke test result.
 - Tag `post-foundation`.
 
@@ -309,16 +315,18 @@ Implementation notes:
 
 ### 6.2 Component responsibilities
 
+All state flows from `useTestSession` (called inside `SatPractice.tsx`) by **pure prop-drilling** down to leaf components. No React Context, no global store. The component tree is shallow enough (max 3 levels: `SatPractice` → `TestScreen` → `QuestionView`/`QuestionNavigator`) that drilling stays manageable.
+
 | Component | Props | Responsibility |
 |---|---|---|
 | `SatPractice.tsx` | none | Top-level FSM router. Calls `useTestSession()` and renders the active screen. ~30 lines. |
 | `StartScreen.tsx` | `{ name, setName, testLength, setTestLength, onStart }` | Name input, Quick/Full toggle, Start button. Pure presentational. |
-| `TestScreen.tsx` | `{ test, secIdx, qIdx, responses, remaining, onSelect, onGoToQuestion, onSubmitSection }` | Composes `TopBar`, `QuestionView`, `QuestionNavigator`. Picks `section = test.sections[secIdx]` and `question = section.questions[qIdx]` from props. |
+| `TestScreen.tsx` | `{ section, secIdx, totalSections, qIdx, sectionResponses, remaining, studentName, onSelect, onGoToQuestion, onSubmitSection }` | Receives the already-extracted current `TestSection` (not the whole `Test`) plus `sectionResponses = responses[secIdx]`. Composes `TopBar`, `QuestionView`, `QuestionNavigator`. Smaller blast radius — never reaches into `test.sections`. |
 | `TopBar.tsx` | `{ secIdx, qIdx, totalQ, name, remaining }` | The "Section · Question · timer · name" header. Owns timer color thresholds: ≤30s = danger, ≤120s = warn. |
 | `QuestionView.tsx` | `{ question, selected, onSelect, onPrev, onNext, isFirst, isLast }` | Renders optional passage, prompt, choice list, prev/next controls. |
-| `QuestionNavigator.tsx` | `{ section, qIdx, responses, onGoToQuestion, onSubmitSection, isLastSection }` | Numbered button grid (with answered/current state) plus "Submit section" / "Submit test" button. |
+| `QuestionNavigator.tsx` | `{ section, qIdx, sectionResponses, onGoToQuestion, onSubmitSection, isLastSection }` | Numbered button grid (with answered/current state) plus "Submit section" / "Submit test" button. |
 | `ResultsScreen.tsx` | `{ test, responses, results, showReview, onToggleReview, onNewTest }` | Score box, per-section breakdown, "Start a New Test" / "Show full review" buttons. Renders `<ReviewItem>` list when `showReview`. |
-| `ReviewItem.tsx` | `{ question, chosenIndex }` | One reviewed question: skill tag, correct/incorrect/skipped badge, the user's answer, the correct answer (if wrong), and the explanation. Explanations continue to use `dangerouslySetInnerHTML` because `BANK` content is trusted and contains `<b>` tags — this constraint is documented inline. |
+| `ReviewItem.tsx` | `{ question, chosenIndex }` | One reviewed question: skill tag, correct/incorrect/skipped badge, the user's answer, the correct answer (if wrong), and the explanation. Explanations continue to use `dangerouslySetInnerHTML` because `BANK` content is trusted and contains `<b>` tags — this constraint is documented inline. **Flagged for revisit in AI sub-project (#2): once questions become AI-generated, this becomes a real XSS risk and must be replaced with a constrained renderer or sanitizer.** |
 
 ### 6.3 Pure logic in `app/lib/test.ts`
 
@@ -356,7 +364,7 @@ The scaled-score formula `Math.round((400 + pct * 1200) / 10) * 10` is preserved
 
 ```ts
 export interface Question {
-  id: string;                  // stable; 'seed-rw-001'… for current BANK
+  id: string;                  // immutable seed-(rw|math)-NNN; see Step 4 id-format rules
   section: 'rw' | 'math';
   skill: string;
   passage?: string;
@@ -367,10 +375,10 @@ export interface Question {
   source: 'seed' | 'ai';       // every Foundation row is 'seed'
 }
 
-export const BANK: Question[] = [ /* … 30 entries … */ ];
+export const BANK: Question[] = [ /* … 34 entries (17 rw + 17 math), each with stable id … */ ];
 ```
 
-Designed to match the eventual `sat.questions` row shape so the AI sub-project only adds storage, not a type rewrite.
+Designed to match the eventual `sat.questions` row shape so the AI sub-project only adds storage, not a type rewrite. **Ids are load-bearing** once committed — see Step 4 sub-step 3 for the locked format and immutability constraint.
 
 ---
 
@@ -385,11 +393,11 @@ NEXT_PUBLIC_SUPABASE_URL=https://falgykkspbtrwdcchayi.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key from Supabase dashboard>
 ```
 
-`.env.example` (committed):
+`.env.example` (committed — uses the real PropLedger URL so the project ref is discoverable from a fresh clone; `NEXT_PUBLIC_`-prefixed values are not secret):
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key from Supabase dashboard>
+NEXT_PUBLIC_SUPABASE_URL=https://falgykkspbtrwdcchayi.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<paste anon key from Supabase dashboard>
 ```
 
 The Supabase service-role key is **not** placed in `.env.local`. Service-role usage starts in the Auth and AI sub-projects and lives only in deployment env (Vercel).
@@ -416,21 +424,23 @@ export function createClient() {
 ```sql
 create schema if not exists sat;
 
--- deny-by-default: tables created later must explicitly grant + add RLS policies.
-revoke all on schema sat from anon, authenticated;
+-- deny-by-default for Supabase roles AND the implicit PUBLIC role,
+-- so future SECURITY DEFINER functions don't inherit EXECUTE accidentally.
+revoke all on schema sat from anon, authenticated, public;
 grant usage on schema sat to anon, authenticated;
 
 alter default privileges in schema sat
-  revoke all on tables from anon, authenticated;
+  revoke all on tables from anon, authenticated, public;
 alter default privileges in schema sat
-  revoke all on sequences from anon, authenticated;
+  revoke all on sequences from anon, authenticated, public;
 alter default privileges in schema sat
-  revoke all on functions from anon, authenticated;
+  revoke all on functions from anon, authenticated, public;
 ```
 
-Application path:
-- **Preferred:** `mcp__claude_ai_Supabase__apply_migration` (PropLedger is MCP-accessible).
-- **Alternative:** `pnpm dlx supabase db push` after `pnpm dlx supabase link --project-ref falgykkspbtrwdcchayi`.
+Application path (preferred order):
+1. **Supabase preview branch** (default): `pnpm dlx supabase branches create foundation-schema`, push migration, verify `sat` schema exists on the branch via the SQL editor, then `pnpm dlx supabase branches merge`. Safest because PropLedger is a shared production project.
+2. **Direct via MCP** (if branching is unavailable on the project's tier): `mcp__claude_ai_Supabase__apply_migration` (PropLedger is MCP-accessible).
+3. **Direct via CLI**: `pnpm dlx supabase db push` after `pnpm dlx supabase link --project-ref falgykkspbtrwdcchayi`.
 
 ### 7.4 Smoke test
 
@@ -448,6 +458,8 @@ Application path:
 | **Supabase CLI link state lost after `git clone` or worktree creation.** | Medium | Low — easily fixed | `supabase/.temp/` is gitignored. Documented in repo README that a fresh checkout needs `pnpm dlx supabase link --project-ref falgykkspbtrwdcchayi`. Aligns with the OneReal worktree gotcha noted in `onereal_project.md`. |
 | **`dangerouslySetInnerHTML` in `ReviewItem` becomes an XSS vector once questions come from AI (sub-project #2).** | Low (in Foundation) / Medium (later) | High once user-generated content enters | Out of scope for Foundation. Flagged here for the AI sub-project: either sanitize at insert time, or move to a constrained renderer (e.g., `react-markdown` with an allowlist), or strip HTML and render plain text + a small allowed subset. |
 | **Next.js 15 surfaces an unexpected breaking change.** | Low | Medium | Step 3 is isolated; if a blocker appears we hold at Next 14, since the Supabase SSR helpers support both. |
+| **shadcn `init` defaults set up dark-mode tokens the rewritten components ignore inconsistently.** | Medium | Low | During Step 6, when running `pnpm dlx shadcn@latest init`, choose a single theme (light-only is simplest for v1). If dark mode is wanted later it can be added deliberately; inheriting it accidentally produces a half-working dark UI. |
+| **Strict TypeScript + React strict-mode dev surfaces hidden bugs in the existing FSM.** | Medium | Low–Medium | The existing `SatPractice.jsx` carries `// eslint-disable-next-line react-hooks/exhaustive-deps` on the timer effect (`handleTimeUp` is referenced but not in deps, not memoized). Strict mode will continue to need that disable in TS, or the implementer must promote `handleTimeUp` to a `useCallback` whose deps include `secIdx`, `test`, `responses`. Verify behavior parity via Step 9 manual checklist — do not "fix" the disable without retesting time-up auto-advance, which is load-bearing. |
 
 ---
 
@@ -473,6 +485,7 @@ Application path:
 - [ ] `/dashboard` renders the placeholder and the server logs reflect the successful Supabase smoke test.
 - [ ] The `sat` schema exists in the PropLedger Supabase project (`select * from pg_namespace where nspname = 'sat';` returns one row).
 - [ ] Anonymous role cannot create or read in `sat` (verified via SQL editor with `set role anon;`).
+- [ ] `README.md` references `pnpm` (not `npm`) and the new component paths.
 
 ---
 
