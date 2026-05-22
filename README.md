@@ -139,6 +139,18 @@ The per-skill and per-section aggregates come from the `sat.user_analytics()` RP
 score trend and summary stats are derived from the attempt list. All numbers reflect
 only the signed-in user's own attempts.
 
+## Admin
+
+`/admin` is an admin-only area for moderating the AI question pool. Browse the pool
+with section and status filters, open any question in full (passage, choices with the
+correct answer marked, explanation, metadata), and soft-disable a bad question — or
+re-enable it later. A disabled question is never drawn into a test again.
+
+Only users whose `sat.profiles.role` is `'admin'` can reach `/admin`; everyone else
+gets a 404, and the Admin nav link is shown only to admins. To promote a user, run a
+direct `UPDATE` as the service role: `update sat.profiles set role = 'admin' where id
+= '<user-uuid>';`.
+
 ## Run it locally
 
     pnpm install
@@ -170,6 +182,13 @@ to push the production deployment.
 - app/(app)/dashboard/page.tsx       dashboard listing the signed-in user's past test attempts
 - app/(app)/dashboard/attempts/[id]/page.tsx  read-only review of one past attempt
 - app/(app)/analytics/page.tsx       analytics page — score trend, section/skill accuracy, focus areas
+- app/(app)/admin/layout.tsx         admin-only layout — requireAdmin() 404s non-admins
+- app/(app)/admin/page.tsx           question-pool page — counts, section/status filters, rows
+- app/(app)/admin/questions/[id]/page.tsx  full question detail + enable/disable toggle
+- app/components/admin/QuestionRow.tsx        one pool row with an enable/disable toggle
+- app/lib/admin/guard.ts             requireAdmin — admin gate shared by the layout and actions
+- app/lib/admin/queries.ts           listQuestions / getQuestion / getPoolCounts — pool reads
+- app/lib/admin/actions.ts           setQuestionEnabled server action (service-role write)
 - app/components/analytics/ScoreTrend.tsx     inline-SVG score-trend line chart
 - app/components/analytics/SkillAccuracy.tsx  per-skill accuracy bars grouped by section
 - app/lib/analytics/compute.ts       pure analytics helpers (accuracy, sorting, focus areas, summary)

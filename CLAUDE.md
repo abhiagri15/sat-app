@@ -29,13 +29,20 @@ Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focu
 - [app/(app)/dashboard/page.tsx](app/(app)/dashboard/page.tsx) — dashboard; server component, lists the signed-in user's past attempts (newest first) via `listAttempts()`.
 - [app/(app)/dashboard/attempts/[id]/page.tsx](app/(app)/dashboard/attempts/[id]/page.tsx) — read-only review of one attempt via `getAttempt(id)`; `notFound()` if the id is missing or not the user's.
 - [app/(app)/analytics/page.tsx](app/(app)/analytics/page.tsx) — analytics page; server component, calls `getAnalytics()` and renders summary stats, score trend, section/skill accuracy, and a focus-areas callout. Empty state when `summary.testsTaken === 0`.
+- [app/(app)/admin/layout.tsx](app/(app)/admin/layout.tsx) — gates the whole `/admin` subtree; `await requireAdmin()` 404s non-admins before any admin page renders.
+- [app/(app)/admin/page.tsx](app/(app)/admin/page.tsx) — admin question-pool page; server component, shows pool counts, section/status filters, and a list of `QuestionRow`s.
+- [app/(app)/admin/questions/[id]/page.tsx](app/(app)/admin/questions/[id]/page.tsx) — full question detail (passage, choices with the correct answer marked, explanation, metadata) + enable/disable toggle; `notFound()` for a missing id.
+- [app/components/admin/QuestionRow.tsx](app/components/admin/QuestionRow.tsx) — one pool row: metadata, truncated prompt, and a `setQuestionEnabled`-bound enable/disable form.
+- [app/lib/admin/guard.ts](app/lib/admin/guard.ts) — `requireAdmin()`: returns the signed-in admin's profile or `notFound()`s. Shared by the `/admin` layout and every admin server action.
+- [app/lib/admin/queries.ts](app/lib/admin/queries.ts) — `listQuestions()` / `getQuestion()` / `getPoolCounts()`: read `sat.questions` for the admin pool views.
+- [app/lib/admin/actions.ts](app/lib/admin/actions.ts) — `'use server'` `setQuestionEnabled()`: re-checks `requireAdmin()`, then soft-enables/disables a question via the service-role client.
 - [app/(auth)/login/page.tsx](app/(auth)/login/page.tsx) — email/password sign-in + Google OAuth button.
 - [app/(auth)/register/page.tsx](app/(auth)/register/page.tsx) — account creation.
 - [app/(auth)/forgot-password/page.tsx](app/(auth)/forgot-password/page.tsx) — password-reset request.
 - [app/(auth)/reset-password/page.tsx](app/(auth)/reset-password/page.tsx) — new-password form.
 - [app/auth/callback/route.ts](app/auth/callback/route.ts) — exchanges the OAuth/email-link `code` for a session; redirects into the app.
 - [middleware.ts](middleware.ts) — refreshes the Supabase session cookie every request; redirects unauthenticated traffic to `/login`. Public paths: `/login`, `/register`, `/forgot-password`, `/reset-password`, `/auth/callback`.
-- [app/components/AppHeader.tsx](app/components/AppHeader.tsx) — server component; shows title, `/dashboard` and `/analytics` links, user display name, and a Sign out button.
+- [app/components/AppHeader.tsx](app/components/AppHeader.tsx) — server component; shows title, `/dashboard` and `/analytics` links, an `/admin` link for admins only, user display name, and a Sign out button.
 - [app/lib/auth/schemas.ts](app/lib/auth/schemas.ts) — zod schemas for the four auth forms (`loginSchema`, `registerSchema`, `forgotPasswordSchema`, `resetPasswordSchema`).
 - [app/lib/auth/actions.ts](app/lib/auth/actions.ts) — `'use server'` `signOut()` action: clears the session and redirects to `/login`.
 - [app/lib/auth/profile.ts](app/lib/auth/profile.ts) — `getOrCreateProfile()`: React `cache()`-wrapped server helper; reads or lazily creates the signed-in user's `sat.profiles` row.
@@ -112,6 +119,16 @@ saved attempts.
 - **`sat.user_analytics()` is `security invoker` — deliberately unlike the write RPCs.** It is a read-only aggregation, so it runs as the *caller*: RLS on `sat.attempt_responses` (select-only, scoped to `auth.uid()`) confines its results to the signed-in user. No `auth.uid()` filter is *required* for correctness — but the function keeps an explicit `where user_id = auth.uid()` anyway, as a clarity backstop (do not "clean it up"; it documents intent). This is the opposite of the `security definer` write RPCs (`draw_questions`, `save_attempt`), which must bypass RLS to write and therefore set `user_id := auth.uid()` themselves. Keep this distinction: a function that only reads RLS-protected tables should stay `security invoker`; do not make `user_analytics` a definer.
 - **Analytics compute helpers are checked by a script, not a test runner.** The pure helpers in `app/lib/analytics/compute.ts` are exercised by `scripts/check-analytics.ts` (`pnpm dlx tsx scripts/check-analytics.ts`). If you change accuracy/sorting/summary logic, update that script too.
 - **`ScoreTrend` / `SkillAccuracy` are plain (non-client) components.** They render only SVG/CSS from props — no hooks, no `'use client'`. The `/analytics` page is a server component; keep these dependency-free and server-renderable.
+
+## Admin sub-project gotchas
+
+The admin sub-project has landed: the `/admin` area lets an admin moderate the AI
+question pool — browse with section/status filters, inspect a question in full, and
+soft-disable (or re-enable) a bad one.
+
+- **`/admin` is gated twice — by the layout AND inside every admin action.** `app/(app)/admin/layout.tsx` calls `requireAdmin()`, so the whole subtree is admin-only. But UI reachability is never the gate: every admin server action (`setQuestionEnabled`) calls `requireAdmin()` again before it writes. `requireAdmin()` returns **404, not 403**, for non-admins (`notFound()`) — the `/admin` area does not advertise its own existence. Keep both checks; do not drop the in-action one on the assumption the layout already gated the page.
+- **Admin writes go through the service-role client via a role-gated `'use server'` action.** `sat.questions` is RLS write-locked (select-only policy — see the AI sub-project gotchas). The anon/authenticated role cannot update it, so `setQuestionEnabled` runs `requireAdmin()` and then writes through `createAdminClient()` (service-role, bypasses RLS). The role check is what authorizes the write — the service-role client itself authorizes nothing. Never expose a write path that skips `requireAdmin()`.
+- **`sat.questions.enabled` is a soft-disable flag, and `draw_questions` filters it.** Disabling a question never deletes it — it flips `enabled` to `false`, and the `draw_questions` RPC excludes disabled rows, so a disabled question is never served into a test again. Re-enabling flips it back. Do not "clean up" disabled rows by deleting them; the admin pool views (and re-enable) depend on them staying.
 
 ## Things that will bite you
 
