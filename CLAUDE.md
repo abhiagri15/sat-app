@@ -73,7 +73,7 @@ Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focu
 - [app/components/analytics/ScoreTrend.tsx](app/components/analytics/ScoreTrend.tsx) — plain (non-client) inline-SVG line chart of scaled score over attempts. No charting dependency.
 - [app/components/analytics/SkillAccuracy.tsx](app/components/analytics/SkillAccuracy.tsx) — plain component: per-skill CSS accuracy bars grouped by section, weakest-first, colour-graded.
 - [scripts/check-analytics.ts](scripts/check-analytics.ts) — scripted assertion file for the analytics compute helpers. Run with `pnpm dlx tsx scripts/check-analytics.ts`.
-- [vercel.json](vercel.json) — Vercel Cron: `0 * * * *` (hourly) → `/api/admin/generate-questions`.
+- [vercel.json](vercel.json) — Vercel Cron: `0 0 * * *` (daily) → `/api/admin/generate-questions`. Hobby plan caps cron at daily; on Pro, change to `0 * * * *` for hourly.
 
 `buildTest()` in `app/lib/test.ts` is the test-construction pipeline: filters `BANK` by section, shuffles questions, shuffles each question's choices (remapping the stored `answerIndex` to the new position), and slices to `shortCount` for "Quick" or all questions for "Full". A fresh shuffle runs on every "Start a New Test" — there is no persistence (no localStorage, no backend).
 
