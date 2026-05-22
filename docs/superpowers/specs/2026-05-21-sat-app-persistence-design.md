@@ -285,6 +285,11 @@ begin
   if v_user is null then
     raise exception 'not authenticated';
   end if;
+  -- Defensive: the server action's zod schema already requires a non-empty
+  -- responses array; this keeps the RPC safe regardless of its caller.
+  if jsonb_array_length(p_responses) = 0 then
+    raise exception 'no responses';
+  end if;
 
   insert into sat.test_attempts (
     user_id, student_name, test_length,
@@ -416,7 +421,10 @@ arguments, no I/O:
 | per response `chosenIndex` | `responses[si][qi]` (`null` = skipped) |
 | per response `isCorrect` | `chosenIndex === q.answerIndex` |
 
-`toAttemptPayload` is pure, so `scripts/check-payload.ts` exercises it directly.
+A skipped question (`chosenIndex === null`) yields `isCorrect: false` — `null`
+never equals a numeric `answerIndex` — which is the intended mapping onto the
+`is_correct boolean not null` column. `toAttemptPayload` is pure, so
+`scripts/check-payload.ts` exercises it directly.
 
 ### 7.2 `attemptPayloadSchema` (`app/lib/persistence/schema.ts`)
 
@@ -482,10 +490,12 @@ signed-in user.
   unambiguous — it is decided solely by the attempt query, so a real attempt
   with zero responses is never mistaken for missing. If `id` is not a valid
   uuid, the first query errors; that error is caught and treated as not-found.
-- `responseToQuestion(row)` — maps an `attempt_responses` row to the `Question`
-  shape `ReviewItem` expects (`passage: row.passage ?? undefined`, `answerIndex:
-  row.answer_index`, `source` cast, `choices` guarded to an array — same posture
-  as the existing `rowToQuestion`).
+- `responseToQuestion(row)` — maps an `attempt_responses` row to the **full**
+  `Question` shape `ReviewItem` expects: `id: row.question_id`, `section:
+  row.section_key`, `skill`, `passage: row.passage ?? undefined`, `prompt`,
+  `choices` guarded to an array, `answerIndex: row.answer_index`, `explanation`,
+  `source` cast — every required `Question` field (the interface requires
+  `section`), same posture as the existing `rowToQuestion`.
 - Types `AttemptSummary`, `AttemptResponseRow`, `AttemptDetail` (`{ attempt:
   AttemptSummary; responses: AttemptResponseRow[] }`).
 
