@@ -5,6 +5,7 @@ import {
   type QuestionFilters,
 } from '@/app/lib/admin/queries';
 import { QuestionRow } from '@/app/components/admin/QuestionRow';
+import { countOpenFlags } from '@/app/lib/admin/flags';
 
 const SECTION_FILTERS: { label: string; section?: 'rw' | 'math' }[] = [
   { label: 'All sections', section: undefined },
@@ -37,9 +38,10 @@ export default async function AdminPage({
       sp.status === 'enabled' || sp.status === 'disabled' ? sp.status : undefined,
   };
 
-  const [counts, questions] = await Promise.all([
+  const [counts, questions, openFlags] = await Promise.all([
     getPoolCounts(),
     listQuestions(filters),
+    countOpenFlags(),
   ]);
 
   return (
@@ -50,6 +52,12 @@ export default async function AdminPage({
         disabled · {counts.ai} AI · {counts.seed} seed · {counts.rw} R&amp;W ·{' '}
         {counts.math} Math
       </p>
+      <Link
+        href="/admin/flags"
+        className="mt-2 inline-block text-sm text-blue-600 underline"
+      >
+        {openFlags} open flag{openFlags === 1 ? '' : 's'} →
+      </Link>
 
       <div className="mt-4 flex flex-wrap gap-2">
         {SECTION_FILTERS.map((f) => {
