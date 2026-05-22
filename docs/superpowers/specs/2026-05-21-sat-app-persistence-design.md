@@ -434,7 +434,10 @@ never equals a numeric `answerIndex` — which is the intended mapping onto the
 A zod schema matching `AttemptPayload`: `testLength` an enum, the counts
 non-negative integers, `scaledScore` in `400..1600`, `responses` a non-empty
 array of objects with `chosenIndex` nullable, `choices` a non-empty string
-array. The server action rejects anything that fails it before touching the DB.
+array, and `prompt` / `explanation` required non-empty strings (so a question
+with a missing explanation fails validation here, before the `not null` column
+constraint would). The server action rejects anything that fails it before
+touching the DB.
 
 ### 7.3 `saveAttempt` server action (`app/lib/persistence/actions.ts`)
 
