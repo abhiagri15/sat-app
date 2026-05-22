@@ -127,6 +127,18 @@ the user's answer marked correct, incorrect, or skipped, plus the worked explana
 review reads the question exactly as it was presented during that test (see the gotcha in
 `CLAUDE.md` about why responses snapshot the shuffled choices).
 
+## Analytics
+
+`/analytics` turns the user's saved attempts into a progress view. It shows a score
+trend over time (an inline-SVG line chart of scaled score, oldest → newest), per-section
+and per-skill accuracy bars, a focus-areas callout naming the weakest skills worth more
+practice, and summary stats (tests taken, best/average score, questions answered). Users
+with no attempts get an empty state pointing them to start a test.
+
+The per-skill and per-section aggregates come from the `sat.user_analytics()` RPC; the
+score trend and summary stats are derived from the attempt list. All numbers reflect
+only the signed-in user's own attempts.
+
 ## Run it locally
 
     pnpm install
@@ -157,6 +169,12 @@ to push the production deployment.
 - app/(app)/page.tsx                 home route (authenticated), renders the SAT practice test
 - app/(app)/dashboard/page.tsx       dashboard listing the signed-in user's past test attempts
 - app/(app)/dashboard/attempts/[id]/page.tsx  read-only review of one past attempt
+- app/(app)/analytics/page.tsx       analytics page — score trend, section/skill accuracy, focus areas
+- app/components/analytics/ScoreTrend.tsx     inline-SVG score-trend line chart
+- app/components/analytics/SkillAccuracy.tsx  per-skill accuracy bars grouped by section
+- app/lib/analytics/compute.ts       pure analytics helpers (accuracy, sorting, focus areas, summary)
+- app/lib/analytics/queries.ts       getAnalytics — assembles the analytics view from RPC + attempts
+- scripts/check-analytics.ts         scripted check for the analytics compute helpers
 - app/lib/persistence/payload.ts     toAttemptPayload — pure mapper: finished test → save_attempt payload
 - app/lib/persistence/actions.ts     server action: validates the payload and calls the save_attempt RPC
 - app/lib/persistence/queries.ts     listAttempts / getAttempt — reads attempt history from Supabase
@@ -190,6 +208,7 @@ to push the production deployment.
 - supabase/migrations/20260521030000_sat_questions.sql  sat.questions + sat.served_questions + draw_questions RPC
 - supabase/migrations/20260521040000_sat_service_role_grants.sql  grants service_role USAGE on sat schema
 - supabase/migrations/20260521050000_sat_test_attempts.sql  sat.test_attempts + sat.attempt_responses + save_attempt RPC
+- supabase/migrations/20260521060000_sat_user_analytics.sql  sat.user_analytics security-invoker aggregation RPC
 
 ## Adding questions
 Open `app/lib/questions.ts` and add objects to the `BANK` array. Each question looks like:

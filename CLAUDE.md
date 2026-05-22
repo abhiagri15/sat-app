@@ -13,11 +13,12 @@ pnpm lint             # next lint (uses Next.js defaults)
 pnpm type-check       # tsc --noEmit
 ```
 
-There is no unit-test runner in this project. The one pure mapper that warrants checking,
-`toAttemptPayload`, is exercised by a scripted assertion file:
+There is no unit-test runner in this project. The pure modules that warrant checking are
+exercised by scripted assertion files:
 
 ```bash
-pnpm dlx tsx scripts/check-payload.ts   # builds a test, maps it, asserts the payload shape
+pnpm dlx tsx scripts/check-payload.ts     # builds a test, maps it, asserts the payload shape
+pnpm dlx tsx scripts/check-analytics.ts   # asserts the analytics compute helpers
 ```
 
 ## Architecture
@@ -27,13 +28,14 @@ Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focu
 - [app/(app)/page.tsx](app/(app)/page.tsx) — server entry (authenticated), reads the profile, renders `<SatPractice studentName={...} />`.
 - [app/(app)/dashboard/page.tsx](app/(app)/dashboard/page.tsx) — dashboard; server component, lists the signed-in user's past attempts (newest first) via `listAttempts()`.
 - [app/(app)/dashboard/attempts/[id]/page.tsx](app/(app)/dashboard/attempts/[id]/page.tsx) — read-only review of one attempt via `getAttempt(id)`; `notFound()` if the id is missing or not the user's.
+- [app/(app)/analytics/page.tsx](app/(app)/analytics/page.tsx) — analytics page; server component, calls `getAnalytics()` and renders summary stats, score trend, section/skill accuracy, and a focus-areas callout. Empty state when `summary.testsTaken === 0`.
 - [app/(auth)/login/page.tsx](app/(auth)/login/page.tsx) — email/password sign-in + Google OAuth button.
 - [app/(auth)/register/page.tsx](app/(auth)/register/page.tsx) — account creation.
 - [app/(auth)/forgot-password/page.tsx](app/(auth)/forgot-password/page.tsx) — password-reset request.
 - [app/(auth)/reset-password/page.tsx](app/(auth)/reset-password/page.tsx) — new-password form.
 - [app/auth/callback/route.ts](app/auth/callback/route.ts) — exchanges the OAuth/email-link `code` for a session; redirects into the app.
 - [middleware.ts](middleware.ts) — refreshes the Supabase session cookie every request; redirects unauthenticated traffic to `/login`. Public paths: `/login`, `/register`, `/forgot-password`, `/reset-password`, `/auth/callback`.
-- [app/components/AppHeader.tsx](app/components/AppHeader.tsx) — server component; shows title, `/dashboard` link, user display name, and a Sign out button.
+- [app/components/AppHeader.tsx](app/components/AppHeader.tsx) — server component; shows title, `/dashboard` and `/analytics` links, user display name, and a Sign out button.
 - [app/lib/auth/schemas.ts](app/lib/auth/schemas.ts) — zod schemas for the four auth forms (`loginSchema`, `registerSchema`, `forgotPasswordSchema`, `resetPasswordSchema`).
 - [app/lib/auth/actions.ts](app/lib/auth/actions.ts) — `'use server'` `signOut()` action: clears the session and redirects to `/login`.
 - [app/lib/auth/profile.ts](app/lib/auth/profile.ts) — `getOrCreateProfile()`: React `cache()`-wrapped server helper; reads or lazily creates the signed-in user's `sat.profiles` row.
@@ -54,6 +56,11 @@ Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focu
 - [app/lib/persistence/actions.ts](app/lib/persistence/actions.ts) — `'use server'` `saveAttempt()` action: zod-validates the payload, then calls the `sat.save_attempt` RPC.
 - [app/lib/persistence/queries.ts](app/lib/persistence/queries.ts) — `listAttempts()` / `getAttempt(id)`: read attempt history from `sat.test_attempts` / `sat.attempt_responses` (RLS-scoped to the user).
 - [scripts/check-payload.ts](scripts/check-payload.ts) — scripted assertion file for `toAttemptPayload` (no unit-test runner). Run with `pnpm dlx tsx scripts/check-payload.ts`.
+- [app/lib/analytics/compute.ts](app/lib/analytics/compute.ts) — pure analytics helpers: `accuracyPct`, `sortSkillsWeakestFirst`, `focusAreas`, `summarize`, plus the `SkillStat` / `SectionStat` / `TrendPoint` / `AnalyticsView` types. No I/O. Covered by `scripts/check-analytics.ts`.
+- [app/lib/analytics/queries.ts](app/lib/analytics/queries.ts) — `getAnalytics()`: assembles the analytics view — per-skill/section aggregates from the `sat.user_analytics` RPC, score trend + summary from `listAttempts()`.
+- [app/components/analytics/ScoreTrend.tsx](app/components/analytics/ScoreTrend.tsx) — plain (non-client) inline-SVG line chart of scaled score over attempts. No charting dependency.
+- [app/components/analytics/SkillAccuracy.tsx](app/components/analytics/SkillAccuracy.tsx) — plain component: per-skill CSS accuracy bars grouped by section, weakest-first, colour-graded.
+- [scripts/check-analytics.ts](scripts/check-analytics.ts) — scripted assertion file for the analytics compute helpers. Run with `pnpm dlx tsx scripts/check-analytics.ts`.
 - [vercel.json](vercel.json) — Vercel Cron: `0 */6 * * *` → `/api/admin/generate-questions`.
 
 `buildTest()` in `app/lib/test.ts` is the test-construction pipeline: filters `BANK` by section, shuffles questions, shuffles each question's choices (remapping the stored `answerIndex` to the new position), and slices to `shortCount` for "Quick" or all questions for "Full". A fresh shuffle runs on every "Start a New Test" — there is no persistence (no localStorage, no backend).
@@ -95,6 +102,16 @@ Path alias `@/*` → `./*` (repo root) is configured in `tsconfig.json`; cross-d
 - **`attempt_responses` rows snapshot the question as it was presented.** Each row stores the per-test-shuffled `choices`, the remapped `answer_index`, and the `explanation` — not a reference to the live `sat.questions` row. `buildTest()` shuffles each question's choices per test, so a stored `chosen_index` is meaningless against the original question's choice order. The review page (`/dashboard/attempts/[id]`) must read these snapshotted columns; never re-join to `sat.questions` to "freshen" a past attempt.
 
 - **`toAttemptPayload` is checked by a script, not a test runner.** The project still has no unit-test runner. `toAttemptPayload` (the pure mapper in `app/lib/persistence/payload.ts`) is exercised by `scripts/check-payload.ts`, run with `tsx` (`pnpm dlx tsx scripts/check-payload.ts`). If you change the payload shape, update that script too — it is the only automated check on this mapper.
+
+## Analytics sub-project gotchas
+
+The analytics sub-project has landed: the `/analytics` page (score trend, per-section and
+per-skill accuracy, a focus-areas callout, summary stats) reads entirely from the user's
+saved attempts.
+
+- **`sat.user_analytics()` is `security invoker` — deliberately unlike the write RPCs.** It is a read-only aggregation, so it runs as the *caller*: RLS on `sat.attempt_responses` (select-only, scoped to `auth.uid()`) naturally confines its results to the signed-in user — no `auth.uid()` filter inside the function is needed. This is the opposite of the `security definer` write RPCs (`draw_questions`, `save_attempt`), which must bypass RLS to write and therefore set `user_id := auth.uid()` themselves. Keep this distinction: a function that only reads RLS-protected tables should stay `security invoker`; do not make `user_analytics` a definer.
+- **Analytics compute helpers are checked by a script, not a test runner.** The pure helpers in `app/lib/analytics/compute.ts` are exercised by `scripts/check-analytics.ts` (`pnpm dlx tsx scripts/check-analytics.ts`). If you change accuracy/sorting/summary logic, update that script too.
+- **`ScoreTrend` / `SkillAccuracy` are plain (non-client) components.** They render only SVG/CSS from props — no hooks, no `'use client'`. The `/analytics` page is a server component; keep these dependency-free and server-renderable.
 
 ## Things that will bite you
 
