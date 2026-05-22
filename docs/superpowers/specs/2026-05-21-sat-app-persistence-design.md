@@ -332,6 +332,13 @@ begin
 end;
 $$;
 
+-- Authenticated users read their own rows directly (listAttempts / getAttempt),
+-- so an explicit SELECT grant is required for the select policies to function
+-- (unlike sat.questions, which authenticated reads only through draw_questions).
+-- RLS still scopes every read to the user. No INSERT/UPDATE/DELETE grant — the
+-- save_attempt RPC (security definer) is the only writer.
+grant select on sat.test_attempts to authenticated;
+grant select on sat.attempt_responses to authenticated;
 grant execute on function sat.save_attempt(jsonb, jsonb) to authenticated;
 ```
 
