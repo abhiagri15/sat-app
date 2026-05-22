@@ -11,9 +11,19 @@ interface StartScreenProps {
   setTestLength: (l: TestLength) => void;
   onStart: () => void;
   loading: boolean;
+  dailyAttemptLimit: number;
+  attemptsRemaining: number;
 }
 
-export function StartScreen({ testLength, setTestLength, onStart, loading }: StartScreenProps) {
+export function StartScreen({
+  testLength,
+  setTestLength,
+  onStart,
+  loading,
+  dailyAttemptLimit,
+  attemptsRemaining,
+}: StartScreenProps) {
+  const limitReached = attemptsRemaining <= 0;
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-5 pt-6 pb-16">
       <Card>
@@ -46,11 +56,32 @@ export function StartScreen({ testLength, setTestLength, onStart, loading }: Sta
             </Button>
           </div>
 
-          <div className="flex flex-wrap gap-2.5 mt-2">
-            <Button onClick={onStart} disabled={loading}>
-              {loading ? 'Building your test…' : 'Start Test'}
-            </Button>
-          </div>
+          {limitReached ? (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-900">
+                {dailyAttemptLimit === 0 ? 'Testing is paused' : 'Daily limit reached'}
+              </p>
+              <p className="mt-0.5 text-sm text-amber-800">
+                {dailyAttemptLimit === 0
+                  ? 'An administrator has paused new tests. Check back later.'
+                  : `You’ve used all ${dailyAttemptLimit} of your test${
+                      dailyAttemptLimit === 1 ? '' : 's'
+                    } for today. Come back tomorrow for more practice.`}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-2.5 mt-2">
+                <Button onClick={onStart} disabled={loading}>
+                  {loading ? 'Building your test…' : 'Start Test'}
+                </Button>
+              </div>
+              <p className="text-sm text-slate-500 mt-2">
+                {attemptsRemaining} of {dailyAttemptLimit} test
+                {dailyAttemptLimit === 1 ? '' : 's'} remaining today.
+              </p>
+            </>
+          )}
           <p className="text-sm text-slate-500 mt-3">
             Tip: the timer counts down per section, just like the real SAT. When time runs out, the
             section auto-advances.

@@ -143,6 +143,15 @@ from a test review, and admins triage those reports at `/admin/flags`.
 - **`sat.question_flags` has RLS enabled with NO policies.** Like `sat.questions` writes, the table is deliberately policy-less — with RLS on and no policy, the anon/authenticated role can neither read nor write it directly. Users file a flag only through the `sat.submit_flag` security-definer RPC (it bypasses RLS and sets `user_id := auth.uid()` itself). Admins read and resolve flags only through the service-role client (`listFlags` / `countOpenFlags` / `resolveFlag`), always behind `requireAdmin()`. Do not add an RLS policy to "fix" a query — route the access through the RPC or the role-gated service-role path instead.
 - **The `FlagQuestion` widget lives inside `ReviewItem`.** It is not wired into the two review pages separately — because `ReviewItem` is the shared per-question review component, `FlagQuestion` automatically appears in *both* the post-test results review and the saved-attempt review (`/dashboard/attempts/[id]`). One placement, two surfaces; do not add a second copy to either page.
 
+## Daily test limit
+
+A per-user daily test-submit cap (UTC calendar day), app-wide, in the single-row
+`sat.app_config` table (`daily_attempt_limit`, default 5). Admins edit it at
+`/admin/settings` (the `setDailyAttemptLimit` server action, service-role write).
+
+- **Enforced in two places, keep them in sync.** `app/lib/config.ts` (`getAttemptUsage`) feeds the Start screen, which hides the Start button at the limit — `useTestSession.sessionCompletions` is added to the server count so the gate stays accurate across tests taken without a page reload. The `sat.save_attempt` RPC re-checks the limit and raises `daily attempt limit reached` as the airtight backstop. If you change what counts as an "attempt", change both.
+- **`sat.app_config` is RLS select-only** (`select` policy + grant for `authenticated`, no write policy) — writes go through the service-role client behind `requireAdmin()`, same pattern as the rest of `/admin`.
+
 ## Things that will bite you
 
 - **Answer indices are positional, and choices get shuffled.** In `questions.ts`, `answerIndex` is the index into `choices` *as authored*. `buildTest()` rewrites both arrays in sync — never re-order one without the other.

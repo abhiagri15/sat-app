@@ -5,16 +5,30 @@ import { StartScreen } from './StartScreen';
 import { TestScreen } from './TestScreen';
 import { ResultsScreen } from './ResultsScreen';
 
-export default function SatPractice({ studentName }: { studentName: string }) {
+export default function SatPractice({
+  studentName,
+  attemptsUsedToday,
+  dailyAttemptLimit,
+}: {
+  studentName: string;
+  attemptsUsedToday: number;
+  dailyAttemptLimit: number;
+}) {
   const s = useTestSession(studentName);
 
   if (s.screen === 'start') {
+    // Server-rendered count + tests completed this session (so the gate stays
+    // accurate as the user takes more tests without a page reload).
+    const usedToday = attemptsUsedToday + s.sessionCompletions;
+    const attemptsRemaining = Math.max(0, dailyAttemptLimit - usedToday);
     return (
       <StartScreen
         testLength={s.testLength}
         setTestLength={s.setTestLength}
         onStart={s.start}
         loading={s.loading}
+        dailyAttemptLimit={dailyAttemptLimit}
+        attemptsRemaining={attemptsRemaining}
       />
     );
   }

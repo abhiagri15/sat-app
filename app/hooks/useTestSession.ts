@@ -32,6 +32,7 @@ export interface TestSession {
   toggleReview: () => void;
   loading: boolean;
   saveStatus: SaveStatus;
+  sessionCompletions: number; // tests submitted this browser session
   // actions
   start: () => void;
   selectChoice: (i: number) => void;
@@ -54,6 +55,10 @@ export function useTestSession(initialName = ''): TestSession {
   const [showReview, setShowReview] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  // Tests submitted this session — added to the server-rendered daily count so
+  // the Start screen's limit gate stays accurate without a page reload.
+  // Deliberately NOT reset by newTest(): it accumulates for the whole session.
+  const [sessionCompletions, setSessionCompletions] = useState(0);
   // Guards the save effect so a submitted test is persisted exactly once.
   // (`saveStatus` is its render-visible counterpart.)
   const savedRef = useRef(false);
@@ -95,6 +100,7 @@ export function useTestSession(initialName = ''): TestSession {
   useEffect(() => {
     if (screen !== 'results' || !test || !results || savedRef.current) return;
     savedRef.current = true;
+    setSessionCompletions((n) => n + 1); // one submitted test, for the daily-limit gate
     setSaveStatus('saving');
     saveAttempt(toAttemptPayload(test, responses, results, testLength))
       .then((res) => {
@@ -193,7 +199,7 @@ export function useTestSession(initialName = ''): TestSession {
   return {
     screen, name, setName, testLength, setTestLength,
     test, secIdx, qIdx, responses, remaining,
-    showReview, toggleReview, loading, saveStatus,
+    showReview, toggleReview, loading, saveStatus, sessionCompletions,
     start, selectChoice, goToQuestion, submitSection, newTest, results,
   };
 }

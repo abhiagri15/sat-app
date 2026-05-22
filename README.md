@@ -166,6 +166,14 @@ them with an open/resolved/all status filter, follows each flag to the question 
 points at, and marks it resolved once handled. The `/admin` page shows a running
 count of open flags and links straight to the review list.
 
+## Daily test limit
+
+Each user can submit a limited number of tests per day (UTC calendar day). The
+limit is app-wide, stored in `sat.app_config`, and **defaults to 5**. An admin
+changes it at `/admin/settings`. The Start screen shows how many tests remain and
+blocks starting a new one once the limit is hit; the `sat.save_attempt` RPC
+enforces the same limit as a server-side backstop.
+
 ## Run it locally
 
     pnpm install

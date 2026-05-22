@@ -52,12 +52,14 @@ export default async function AdminPage({
         disabled · {counts.ai} AI · {counts.seed} seed · {counts.rw} R&amp;W ·{' '}
         {counts.math} Math
       </p>
-      <Link
-        href="/admin/flags"
-        className="mt-2 inline-block text-sm text-blue-600 underline"
-      >
-        {openFlags} open flag{openFlags === 1 ? '' : 's'} →
-      </Link>
+      <div className="mt-2 flex flex-wrap gap-4">
+        <Link href="/admin/flags" className="text-sm text-blue-600 underline">
+          {openFlags} open flag{openFlags === 1 ? '' : 's'} →
+        </Link>
+        <Link href="/admin/settings" className="text-sm text-blue-600 underline">
+          Settings →
+        </Link>
+      </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
         {SECTION_FILTERS.map((f) => {
