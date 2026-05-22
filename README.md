@@ -151,6 +151,17 @@ gets a 404, and the Admin nav link is shown only to admins. To promote a user, r
 direct `UPDATE` as the service role: `update sat.profiles set role = 'admin' where id
 = '<user-uuid>';`.
 
+## Feedback
+
+From any question in a test review, a user can report a problem with that question —
+pick a reason (wrong answer, unclear, typo/formatting, other) and optionally add a
+short comment. The report is stored as a flag in `sat.question_flags`.
+
+Reported flags surface at `/admin/flags` (inside the admin area). An admin browses
+them with an open/resolved/all status filter, follows each flag to the question it
+points at, and marks it resolved once handled. The `/admin` page shows a running
+count of open flags and links straight to the review list.
+
 ## Run it locally
 
     pnpm install
@@ -185,10 +196,15 @@ to push the production deployment.
 - app/(app)/admin/layout.tsx         admin-only layout — requireAdmin() 404s non-admins
 - app/(app)/admin/page.tsx           question-pool page — counts, section/status filters, rows
 - app/(app)/admin/questions/[id]/page.tsx  full question detail + enable/disable toggle
+- app/(app)/admin/flags/page.tsx     question-flags review page — status filter, flag list
 - app/components/admin/QuestionRow.tsx        one pool row with an enable/disable toggle
+- app/components/admin/FlagRow.tsx            one flag row — reason, question link, mark-resolved
+- app/components/FlagQuestion.tsx    in-review widget to report a problem with a question
 - app/lib/admin/guard.ts             requireAdmin — admin gate shared by the layout and actions
 - app/lib/admin/queries.ts           listQuestions / getQuestion / getPoolCounts — pool reads
-- app/lib/admin/actions.ts           setQuestionEnabled server action (service-role write)
+- app/lib/admin/actions.ts           setQuestionEnabled / resolveFlag server actions (service-role write)
+- app/lib/admin/flags.ts             listFlags / countOpenFlags — flag reads for the admin review
+- app/lib/feedback/actions.ts        submitFlag server action — files a flag via the submit_flag RPC
 - app/components/analytics/ScoreTrend.tsx     inline-SVG score-trend line chart
 - app/components/analytics/SkillAccuracy.tsx  per-skill accuracy bars grouped by section
 - app/lib/analytics/compute.ts       pure analytics helpers (accuracy, sorting, focus areas, summary)
@@ -228,6 +244,7 @@ to push the production deployment.
 - supabase/migrations/20260521040000_sat_service_role_grants.sql  grants service_role USAGE on sat schema
 - supabase/migrations/20260521050000_sat_test_attempts.sql  sat.test_attempts + sat.attempt_responses + save_attempt RPC
 - supabase/migrations/20260521060000_sat_user_analytics.sql  sat.user_analytics security-invoker aggregation RPC
+- supabase/migrations/20260521080000_sat_question_flags.sql  sat.question_flags + submit_flag RPC (RLS, no policies)
 
 ## Adding questions
 Open `app/lib/questions.ts` and add objects to the `BANK` array. Each question looks like:

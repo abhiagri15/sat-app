@@ -32,10 +32,15 @@ Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focu
 - [app/(app)/admin/layout.tsx](app/(app)/admin/layout.tsx) — gates the whole `/admin` subtree; `await requireAdmin()` 404s non-admins before any admin page renders.
 - [app/(app)/admin/page.tsx](app/(app)/admin/page.tsx) — admin question-pool page; server component, shows pool counts, section/status filters, and a list of `QuestionRow`s.
 - [app/(app)/admin/questions/[id]/page.tsx](app/(app)/admin/questions/[id]/page.tsx) — full question detail (passage, choices with the correct answer marked, explanation, metadata) + enable/disable toggle; `notFound()` for a missing id.
+- [app/(app)/admin/flags/page.tsx](app/(app)/admin/flags/page.tsx) — admin question-flags review page; server component, `listFlags(status)` with an open/resolved/all filter, renders a list of `FlagRow`s.
 - [app/components/admin/QuestionRow.tsx](app/components/admin/QuestionRow.tsx) — one pool row: metadata, truncated prompt, and a `setQuestionEnabled`-bound enable/disable form.
+- [app/components/admin/FlagRow.tsx](app/components/admin/FlagRow.tsx) — one flag row: reason badge, truncated/linked question prompt, optional comment, and a `resolveFlag`-bound mark-resolved form for open flags.
+- [app/components/FlagQuestion.tsx](app/components/FlagQuestion.tsx) — `'use client'` in-review widget: a reason picker + optional comment that files a flag via `submitFlag`. Rendered inside `ReviewItem`.
 - [app/lib/admin/guard.ts](app/lib/admin/guard.ts) — `requireAdmin()`: returns the signed-in admin's profile or `notFound()`s. Shared by the `/admin` layout and every admin server action.
 - [app/lib/admin/queries.ts](app/lib/admin/queries.ts) — `listQuestions()` / `getQuestion()` / `getPoolCounts()`: read `sat.questions` for the admin pool views.
-- [app/lib/admin/actions.ts](app/lib/admin/actions.ts) — `'use server'` `setQuestionEnabled()`: re-checks `requireAdmin()`, then soft-enables/disables a question via the service-role client.
+- [app/lib/admin/actions.ts](app/lib/admin/actions.ts) — `'use server'` `setQuestionEnabled()` / `resolveFlag()`: each re-checks `requireAdmin()`, then writes via the service-role client (soft-enable/disable a question, or mark a flag resolved).
+- [app/lib/admin/flags.ts](app/lib/admin/flags.ts) — `listFlags()` / `countOpenFlags()`: read `sat.question_flags` via the service-role client for the admin review (the table has no RLS policy).
+- [app/lib/feedback/actions.ts](app/lib/feedback/actions.ts) — `'use server'` `submitFlag()`: a signed-in user files a question flag through the `sat.submit_flag` security-definer RPC.
 - [app/(auth)/login/page.tsx](app/(auth)/login/page.tsx) — email/password sign-in + Google OAuth button.
 - [app/(auth)/register/page.tsx](app/(auth)/register/page.tsx) — account creation.
 - [app/(auth)/forgot-password/page.tsx](app/(auth)/forgot-password/page.tsx) — password-reset request.
@@ -129,6 +134,14 @@ soft-disable (or re-enable) a bad one.
 - **`/admin` is gated twice — by the layout AND inside every admin action.** `app/(app)/admin/layout.tsx` calls `requireAdmin()`, so the whole subtree is admin-only. But UI reachability is never the gate: every admin server action (`setQuestionEnabled`) calls `requireAdmin()` again before it writes. `requireAdmin()` returns **404, not 403**, for non-admins (`notFound()`) — the `/admin` area does not advertise its own existence. Keep both checks; do not drop the in-action one on the assumption the layout already gated the page.
 - **Admin writes go through the service-role client via a role-gated `'use server'` action.** `sat.questions` is RLS write-locked (select-only policy — see the AI sub-project gotchas). The anon/authenticated role cannot update it, so `setQuestionEnabled` runs `requireAdmin()` and then writes through `createAdminClient()` (service-role, bypasses RLS). The role check is what authorizes the write — the service-role client itself authorizes nothing. Never expose a write path that skips `requireAdmin()`.
 - **`sat.questions.enabled` is a soft-disable flag, and `draw_questions` filters it.** Disabling a question never deletes it — it flips `enabled` to `false`, and the `draw_questions` RPC excludes disabled rows, so a disabled question is never served into a test again. Re-enabling flips it back. Do not "clean up" disabled rows by deleting them; the admin pool views (and re-enable) depend on them staying.
+
+## Feedback sub-project gotchas
+
+The feedback sub-project has landed: a user can report a problem with any question
+from a test review, and admins triage those reports at `/admin/flags`.
+
+- **`sat.question_flags` has RLS enabled with NO policies.** Like `sat.questions` writes, the table is deliberately policy-less — with RLS on and no policy, the anon/authenticated role can neither read nor write it directly. Users file a flag only through the `sat.submit_flag` security-definer RPC (it bypasses RLS and sets `user_id := auth.uid()` itself). Admins read and resolve flags only through the service-role client (`listFlags` / `countOpenFlags` / `resolveFlag`), always behind `requireAdmin()`. Do not add an RLS policy to "fix" a query — route the access through the RPC or the role-gated service-role path instead.
+- **The `FlagQuestion` widget lives inside `ReviewItem`.** It is not wired into the two review pages separately — because `ReviewItem` is the shared per-question review component, `FlagQuestion` automatically appears in *both* the post-test results review and the saved-attempt review (`/dashboard/attempts/[id]`). One placement, two surfaces; do not add a second copy to either page.
 
 ## Things that will bite you
 
