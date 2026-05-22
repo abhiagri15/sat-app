@@ -228,9 +228,10 @@ The **controller** (not a subagent) applies the committed file to the Supabase p
 The controller runs, via `mcp__claude_ai_Supabase__execute_sql`:
 
 ```sql
-select table_name, row_security
-from information_schema.tables
-where table_schema = 'sat' and table_name in ('test_attempts','attempt_responses');
+select c.relname, c.relrowsecurity as rls_enabled
+from pg_class c
+where c.relnamespace = 'sat'::regnamespace
+  and c.relname in ('test_attempts','attempt_responses');
 
 select tablename, policyname, cmd
 from pg_policies
@@ -241,7 +242,7 @@ join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'sat' and p.proname = 'save_attempt';
 ```
 
-Expected: both tables exist with `row_security = YES`; exactly one policy per table, both `cmd = SELECT`; `save_attempt` exists.
+Expected: both tables exist with `rls_enabled = true`; exactly one policy per table, both `cmd = SELECT`; `save_attempt` exists.
 
 **Task 1 done when:** the migration is committed, applied, and the three verification queries return the expected rows.
 
