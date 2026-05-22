@@ -55,6 +55,7 @@ export function useTestSession(initialName = ''): TestSession {
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   // Guards the save effect so a submitted test is persisted exactly once.
+  // (`saveStatus` is its render-visible counterpart.)
   const savedRef = useRef(false);
 
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -89,13 +90,13 @@ export function useTestSession(initialName = ''): TestSession {
   }, [screen, secIdx]);
 
   // Persist the attempt exactly once, when the results screen first appears.
-  // Runs as an effect (not inside finish()) so it reads committed state.
+  // Runs as an effect (not inside finish()) so it reads committed state, and
+  // reuses the render-derived `results` rather than recomputing the score.
   useEffect(() => {
-    if (screen !== 'results' || !test || savedRef.current) return;
+    if (screen !== 'results' || !test || !results || savedRef.current) return;
     savedRef.current = true;
-    const finalResults = computeResults(test, responses);
     setSaveStatus('saving');
-    saveAttempt(toAttemptPayload(test, responses, finalResults, testLength))
+    saveAttempt(toAttemptPayload(test, responses, results, testLength))
       .then((res) => {
         setSaveStatus(res.ok ? 'saved' : 'error');
         if (!res.ok) console.error('[useTestSession] saveAttempt failed:', res.error);
@@ -104,6 +105,8 @@ export function useTestSession(initialName = ''): TestSession {
         setSaveStatus('error');
         console.error('[useTestSession] saveAttempt threw:', e);
       });
+    // Deps are intentionally [screen] only: the savedRef guard ensures a single
+    // run, so test/responses/results/testLength are read once on purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen]);
 
