@@ -252,6 +252,7 @@ create table if not exists sat.attempt_responses (
   prompt        text not null,
   choices       jsonb not null,                        -- string[] AS PRESENTED
   answer_index  int  not null check (answer_index >= 0),
+  explanation   text not null,                         -- snapshot — see D4
   chosen_index  int  check (chosen_index >= 0),         -- null = skipped
   is_correct    boolean not null
 );
@@ -308,7 +309,7 @@ begin
   insert into sat.attempt_responses (
     attempt_id, user_id, section_key, section_name, position,
     question_id, skill, source, passage, prompt, choices,
-    answer_index, chosen_index, is_correct
+    answer_index, explanation, chosen_index, is_correct
   )
   select
     v_id, v_user,
@@ -322,6 +323,7 @@ begin
     r ->> 'prompt',
     r -> 'choices',
     (r ->> 'answerIndex')::int,
+    r ->> 'explanation',
     (r ->> 'chosenIndex')::int,        -- JSON null -> SQL NULL
     (r ->> 'isCorrect')::boolean
   from jsonb_array_elements(p_responses) as r;
@@ -382,6 +384,7 @@ export interface AttemptResponsePayload {
   prompt: string;
   choices: string[];
   answerIndex: number;
+  explanation: string;
   chosenIndex: number | null;   // null = skipped
   isCorrect: boolean;
 }
@@ -417,7 +420,7 @@ arguments, no I/O:
 | `sectionBreakdown` | `results.perSection` directly — it is already `{ name, correct, total }[]` |
 | per response `sectionKey` / `sectionName` | `test.sections[si].key` / `.name` |
 | per response `position` | `qi` (the 0-indexed question position within the section) |
-| per response `questionId` / `skill` / `source` / `passage` / `prompt` / `choices` / `answerIndex` | the corresponding fields of `q = test.sections[si].questions[qi]` (`q` is the *shuffled* question, so `choices`/`answerIndex` are as presented) |
+| per response `questionId` / `skill` / `source` / `passage` / `prompt` / `choices` / `answerIndex` / `explanation` | the corresponding fields of `q = test.sections[si].questions[qi]` (`q` is the *shuffled* question, so `choices`/`answerIndex` are as presented; `questionId` is `q.id`) |
 | per response `chosenIndex` | `responses[si][qi]` (`null` = skipped) |
 | per response `isCorrect` | `chosenIndex === q.answerIndex` |
 
@@ -490,6 +493,8 @@ signed-in user.
   unambiguous — it is decided solely by the attempt query, so a real attempt
   with zero responses is never mistaken for missing. If `id` is not a valid
   uuid, the first query errors; that error is caught and treated as not-found.
+  An error on the *second* query (responses fetch) also returns `null` rather
+  than rendering an attempt with a partial question list.
 - `responseToQuestion(row)` — maps an `attempt_responses` row to the **full**
   `Question` shape `ReviewItem` expects: `id: row.question_id`, `section:
   row.section_key`, `skill`, `passage: row.passage ?? undefined`, `prompt`,
