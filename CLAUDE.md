@@ -61,7 +61,7 @@ Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focu
 - [app/lib/ai/ollama.ts](app/lib/ai/ollama.ts) — `OllamaCloudProvider`: calls Ollama Cloud's OpenAI-compatible chat endpoint (`{OLLAMA_BASE_URL}/v1/chat/completions`).
 - [app/lib/ai/schema.ts](app/lib/ai/schema.ts) — zod schema for a generated question (`generatedQuestionSchema`).
 - [app/lib/ai/dedup.ts](app/lib/ai/dedup.ts) — `dedupHash(prompt, choices, passage?)`: SHA-256 of normalized content; mirrors the `UNIQUE` constraint on `sat.questions.dedup_hash`.
-- [app/lib/ai/generate.ts](app/lib/ai/generate.ts) — `runGeneration()`: checks pool depth per `(section, skill)`, picks the most-depleted skills (at most 2/run, 3 questions/skill), runs the quality gate (zod → self-verify → dedup), and inserts survivors via the service-role client.
+- [app/lib/ai/generate.ts](app/lib/ai/generate.ts) — `runGeneration()`: demand-driven — counts never-attempted questions (enabled, no `served_questions` row) and is a no-op while that buffer is `>= BUFFER_TARGET` (100); otherwise generates a bounded batch for the thinnest `(section, skill)`, runs the quality gate (zod → self-verify → dedup), and inserts survivors via the service-role client.
 - [app/api/admin/generate-questions/route.ts](app/api/admin/generate-questions/route.ts) — `GET` handler; secret-gated by `CRON_SECRET`; calls `runGeneration()` and returns a JSON summary. In `middleware.ts` `PUBLIC_PATHS` (not session-gated) but requires the bearer secret.
 - [scripts/seed-questions.ts](scripts/seed-questions.ts) — one-time seed script: upserts `BANK` into `sat.questions` (`source='seed'`) via the service-role client. Run with `pnpm dlx tsx --env-file=.env.local scripts/seed-questions.ts`.
 - [app/lib/persistence/payload.ts](app/lib/persistence/payload.ts) — `toAttemptPayload()`: pure mapper from a finished in-memory `Test` + responses + `Results` to the `save_attempt` payload. No I/O. Covered by `scripts/check-payload.ts`.
@@ -73,7 +73,7 @@ Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focu
 - [app/components/analytics/ScoreTrend.tsx](app/components/analytics/ScoreTrend.tsx) — plain (non-client) inline-SVG line chart of scaled score over attempts. No charting dependency.
 - [app/components/analytics/SkillAccuracy.tsx](app/components/analytics/SkillAccuracy.tsx) — plain component: per-skill CSS accuracy bars grouped by section, weakest-first, colour-graded.
 - [scripts/check-analytics.ts](scripts/check-analytics.ts) — scripted assertion file for the analytics compute helpers. Run with `pnpm dlx tsx scripts/check-analytics.ts`.
-- [vercel.json](vercel.json) — Vercel Cron: `0 */6 * * *` → `/api/admin/generate-questions`.
+- [vercel.json](vercel.json) — Vercel Cron: `0 * * * *` (hourly) → `/api/admin/generate-questions`.
 
 `buildTest()` in `app/lib/test.ts` is the test-construction pipeline: filters `BANK` by section, shuffles questions, shuffles each question's choices (remapping the stored `answerIndex` to the new position), and slices to `shortCount` for "Quick" or all questions for "Full". A fresh shuffle runs on every "Start a New Test" — there is no persistence (no localStorage, no backend).
 
