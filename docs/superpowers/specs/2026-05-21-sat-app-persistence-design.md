@@ -136,6 +136,7 @@ sat-app/
 │   ├── components/
 │   │   ├── SatPractice.tsx                      # MODIFIED: pass saveStatus to ResultsScreen
 │   │   ├── ResultsScreen.tsx                    # MODIFIED: render the save indicator
+│   │   ├── ReviewItem.tsx                       # MODIFIED: stale header comment only — no behavior change
 │   │   └── AttemptCard.tsx                      # CREATED: a history-list row
 │   │
 │   └── (app)/dashboard/
@@ -167,7 +168,9 @@ types and the pure `toAttemptPayload(test, responses, results, testLength)`
 function. `scripts/check-payload.ts` — builds a small `Test` via `buildTest`,
 runs `toAttemptPayload`, and asserts the shape and a few values (counts,
 `isCorrect`, skipped → `chosenIndex: null`). Written alongside `payload.ts` so
-the function is exercised before it is wired in.
+the function is exercised before it is wired in. It follows the existing
+`scripts/seed-questions.ts` pattern — run with `tsx`, outside the Next.js build,
+so importing `buildTest` into it never reaches the client bundle.
 
 ### Step 3 — Validation + server action
 
@@ -252,8 +255,10 @@ create table if not exists sat.attempt_responses (
   chosen_index  int  check (chosen_index >= 0),         -- null = skipped
   is_correct    boolean not null
 );
+-- (attempt_id, position) serves both the getAttempt filter and its ORDER BY.
 create index if not exists attempt_responses_attempt_idx
-  on sat.attempt_responses (attempt_id);
+  on sat.attempt_responses (attempt_id, position);
+-- user_id index supports the RLS `using` clause.
 create index if not exists attempt_responses_user_idx
   on sat.attempt_responses (user_id);
 
@@ -331,6 +336,9 @@ Notes:
 - `(r ->> 'chosenIndex')::int` — `->>` on a JSON `null` (or an absent key)
   returns SQL `NULL`, and `NULL::int` is `NULL`, so a skipped question persists
   `chosen_index = NULL` with no special-casing.
+- `student_name` is `not null` with no empty-string check — that is safe only
+  because `start()` already rejects an empty trimmed name and `buildTest`
+  defaults a blank name to `'Student'`, so `test.name` is always non-empty.
 - The migration is applied by the controller via
   `mcp__claude_ai_Supabase__apply_migration`; the implementer writes and commits
   the file.
@@ -392,13 +400,23 @@ export function toAttemptPayload(
 ): AttemptPayload;
 ```
 
-`toAttemptPayload` walks `test.sections`; for section `si`, question `qi` it
-reads `q = test.sections[si].questions[qi]` (already shuffled), `chosenIndex =
-responses[si][qi]`, and sets `isCorrect = chosenIndex === q.answerIndex`. It
-derives `totalCorrect` / `totalQuestions` from `results.perSection` and takes
-`scaledScore` from `results.scaled`, `sectionBreakdown` from
-`results.perSection`. It is pure — no I/O — so `scripts/check-payload.ts` can
-exercise it directly.
+Every field has a precise source — `toAttemptPayload` reads only from its four
+arguments, no I/O:
+
+| Payload field | Source |
+|---|---|
+| `studentName` | `test.name` (`buildTest` sets it to the entered name, or `'Student'` if blank — so it is never empty) |
+| `testLength` | the `testLength` argument (the *only* field not derivable from `test`/`results` — `Test` does not carry it) |
+| `totalCorrect` / `totalQuestions` | summed from `results.perSection` (`correct` / `total`) |
+| `scaledScore` | `results.scaled` |
+| `sectionBreakdown` | `results.perSection` directly — it is already `{ name, correct, total }[]` |
+| per response `sectionKey` / `sectionName` | `test.sections[si].key` / `.name` |
+| per response `position` | `qi` (the 0-indexed question position within the section) |
+| per response `questionId` / `skill` / `source` / `passage` / `prompt` / `choices` / `answerIndex` | the corresponding fields of `q = test.sections[si].questions[qi]` (`q` is the *shuffled* question, so `choices`/`answerIndex` are as presented) |
+| per response `chosenIndex` | `responses[si][qi]` (`null` = skipped) |
+| per response `isCorrect` | `chosenIndex === q.answerIndex` |
+
+`toAttemptPayload` is pure, so `scripts/check-payload.ts` exercises it directly.
 
 ### 7.2 `attemptPayloadSchema` (`app/lib/persistence/schema.ts`)
 
@@ -453,11 +471,17 @@ signed-in user.
 
 - `listAttempts(): Promise<AttemptSummary[]>` — selects `id, created_at,
   student_name, test_length, total_correct, total_questions, scaled_score,
-  section_breakdown` from `sat.test_attempts`, ordered `created_at desc`.
-- `getAttempt(id): Promise<AttemptDetail | null>` — selects the one attempt and
-  all its `attempt_responses` ordered by `position`. Returns `null` if the
-  attempt is not found, RLS hid it, or `id` is not a valid uuid (a malformed id
-  makes Postgres error — caught and treated as not-found).
+  section_breakdown` from `sat.test_attempts`, ordered `created_at desc, id
+  desc` (the `id` tie-break keeps the order stable for attempts saved in the
+  same millisecond).
+- `getAttempt(id): Promise<AttemptDetail | null>` — **two queries**: first the
+  one `test_attempts` row via `.eq('id', id).maybeSingle()`; if that is `null`
+  (not found, or RLS hid it) return `null` immediately. Otherwise a second query
+  for that attempt's `attempt_responses` `.eq('attempt_id', id).order('position')`.
+  Two queries (rather than a foreign-key embed) keep the not-found check
+  unambiguous — it is decided solely by the attempt query, so a real attempt
+  with zero responses is never mistaken for missing. If `id` is not a valid
+  uuid, the first query errors; that error is caught and treated as not-found.
 - `responseToQuestion(row)` — maps an `attempt_responses` row to the `Question`
   shape `ReviewItem` expects (`passage: row.passage ?? undefined`, `answerIndex:
   row.answer_index`, `source` cast, `choices` guarded to an array — same posture
@@ -494,9 +518,14 @@ the review reads in the same order as the test. Each response renders through
 `<ReviewItem question={responseToQuestion(row)} chosenIndex={row.chosen_index} />`.
 
 `ReviewItem` is a `'use client'` component but takes only serializable props, so
-a server component renders it across the boundary with no change to `ReviewItem`
-itself. Its existing `source`-based explanation rendering (seed → trusted HTML,
-ai → escaped text) carries over unchanged on the snapshotted `source`.
+a server component renders it across the boundary with **no behavior change** to
+`ReviewItem`. Its existing `source`-based explanation rendering (seed → trusted
+HTML, ai → escaped text) carries over unchanged on the snapshotted `source`.
+
+One trivial cleanup while reusing it: `ReviewItem`'s header comment (lines
+11–13) still says "The AI sub-project (#2) MUST replace this with a sanitizer…"
+— but #2 already shipped that fix (the `source` branch). The comment is stale
+and is corrected here to describe the shipped behavior. No code change.
 
 ---
 
@@ -514,12 +543,13 @@ ai → escaped text) carries over unchanged on the snapshotted `source`.
 - **No service-role key involved.** Unlike the AI generation endpoint, this
   sub-project's writes are user-initiated and run as the user through the RPC;
   `SUPABASE_SERVICE_ROLE_KEY` is not used here.
-- **Score integrity (accepted limitation).** A submitted score is computed
-  client-side and the RPC does not re-derive it from the responses, so a
-  determined user could craft an inflated `scaled_score` for *their own*
-  history. This is a personal practice app — inflating your own practice score
-  only misleads yourself, and RLS still prevents touching anyone else's data.
-  Server-side re-scoring is deferred; documented in §10.
+- **Data integrity (accepted limitation).** The *entire* attempt payload is
+  computed client-side and the RPC inserts it verbatim — it does not re-derive
+  anything. So a determined user could craft not just an inflated
+  `scaled_score` but also bogus per-row `is_correct` / `answer_index` values,
+  for *their own* history. This is a personal practice app — falsifying your own
+  practice data only misleads yourself, and RLS still prevents touching anyone
+  else's. Server-side re-scoring and re-grading are deferred; documented in §10.
 - **No new XSS surface.** Explanations are rendered through the existing
   `ReviewItem`, which escapes `source='ai'` content and only trusts
   `source='seed'` HTML. The snapshot stores `source`, so this holds on the
