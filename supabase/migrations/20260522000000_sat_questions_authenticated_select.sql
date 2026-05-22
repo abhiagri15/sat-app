@@ -1,0 +1,12 @@
+-- Fix: the Admin sub-project (#6) reads sat.questions directly via the SSR
+-- client (the `authenticated` role), but the AI sub-project never granted
+-- `authenticated` a SELECT privilege on sat.questions — gameplay only ever
+-- read the pool through the draw_questions security-definer RPC, which needs
+-- no caller grant. The `questions_select` RLS policy (to authenticated using
+-- (true)) is inert without the underlying table grant, so /admin and
+-- /admin/questions/[id] failed with "permission denied for table questions".
+--
+-- This grants SELECT only. There is still no INSERT/UPDATE/DELETE grant and no
+-- write policy, so the pool stays read-only to users; the generation endpoint
+-- and admin writes continue to go through the service-role client.
+grant select on sat.questions to authenticated;
