@@ -34,7 +34,17 @@ Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focu
 - [app/components/SatPractice.tsx](app/components/SatPractice.tsx) — `'use client'`. Thin FSM router: `'start' | 'test' | 'results'`. Accepts `studentName` prop; delegates all state to `useTestSession`.
 - [app/hooks/useTestSession.ts](app/hooks/useTestSession.ts) — `'use client'` hook. Holds the timer (a `setInterval` ref restarted whenever `secIdx` changes), per-section `remaining[]` countdown, and `responses[secIdx][qIdx]` answer matrix. Accepts `initialName` to seed the `name` state from the profile.
 - [app/lib/test.ts](app/lib/test.ts) — pure logic: `buildTest`, `computeResults`, `fmtTime`. No React dependencies.
-- [app/lib/questions.ts](app/lib/questions.ts) — `BANK` array + `SECTION_CONFIG` + `SECTION_ORDER`. The single source of truth for content and timing.
+- [app/lib/questions.ts](app/lib/questions.ts) — `BANK` array + `SECTION_CONFIG` (with `fullCount`) + `SECTION_ORDER` + `SKILLS` taxonomy. `BANK` is now the seed source and offline fallback; the runtime source is `sat.questions`.
+- [app/lib/pool.ts](app/lib/pool.ts) — `'use client'`. `drawTestQuestions(testLength)`: calls the `draw_questions` RPC per section via the browser Supabase client and returns a `Question[]` for `useTestSession`.
+- [app/lib/supabase/admin.ts](app/lib/supabase/admin.ts) — `createAdminClient()`. Service-role client. **SERVER ONLY.** Bypasses RLS. Never import from a `'use client'` module.
+- [app/lib/ai/provider.ts](app/lib/ai/provider.ts) — `AIProvider` interface + `getProvider()` factory keyed on `SAT_AI_PROVIDER`.
+- [app/lib/ai/ollama.ts](app/lib/ai/ollama.ts) — `OllamaCloudProvider`: calls Ollama Cloud's OpenAI-compatible chat endpoint (`{OLLAMA_BASE_URL}/v1/chat/completions`).
+- [app/lib/ai/schema.ts](app/lib/ai/schema.ts) — zod schema for a generated question (`generatedQuestionSchema`).
+- [app/lib/ai/dedup.ts](app/lib/ai/dedup.ts) — `dedupHash(prompt, choices, passage?)`: SHA-256 of normalized content; mirrors the `UNIQUE` constraint on `sat.questions.dedup_hash`.
+- [app/lib/ai/generate.ts](app/lib/ai/generate.ts) — `runGeneration()`: checks pool depth per `(section, skill)`, picks the most-depleted skills (at most 2/run, 3 questions/skill), runs the quality gate (zod → self-verify → dedup), and inserts survivors via the service-role client.
+- [app/api/admin/generate-questions/route.ts](app/api/admin/generate-questions/route.ts) — `GET` handler; secret-gated by `CRON_SECRET`; calls `runGeneration()` and returns a JSON summary. In `middleware.ts` `PUBLIC_PATHS` (not session-gated) but requires the bearer secret.
+- [scripts/seed-questions.ts](scripts/seed-questions.ts) — one-time seed script: upserts `BANK` into `sat.questions` (`source='seed'`) via the service-role client. Run with `pnpm dlx tsx --env-file=.env.local scripts/seed-questions.ts`.
+- [vercel.json](vercel.json) — Vercel Cron: `0 */6 * * *` → `/api/admin/generate-questions`.
 
 `buildTest()` in `app/lib/test.ts` is the test-construction pipeline: filters `BANK` by section, shuffles questions, shuffles each question's choices (remapping the stored `answerIndex` to the new position), and slices to `shortCount` for "Quick" or all questions for "Full". A fresh shuffle runs on every "Start a New Test" — there is no persistence (no localStorage, no backend).
 
@@ -50,11 +60,29 @@ Path alias `@/*` → `./*` (repo root) is configured in `tsconfig.json`; cross-d
 
 - **Middleware gates everything except `PUBLIC_PATHS`.** The public paths are: `/login`, `/register`, `/forgot-password`, `/reset-password`, `/auth/callback`. Every other route requires a session — `middleware.ts` redirects unauthenticated requests to `/login`. If you add a new public route (e.g. a health-check endpoint), add it to `PUBLIC_PATHS` in `middleware.ts` or it will be gated.
 
+## AI sub-project gotchas
+
+- **`app/lib/supabase/admin.ts` is server-only.** It imports `SUPABASE_SERVICE_ROLE_KEY` (never `NEXT_PUBLIC_`-prefixed). If you import `createAdminClient` into any `'use client'` module, Next.js will bundle the service-role key into the browser bundle — a critical secret leak. Only import it from route handlers, server actions, or other server-only files (`generate.ts`, `seed-questions.ts`). Verification command (run from the project root):
+  ```powershell
+  Get-ChildItem -Path app -Recurse -Include *.tsx,*.ts | Select-String -Pattern "supabase/admin|SUPABASE_SERVICE_ROLE_KEY"
+  ```
+  Expected: matches only in `app/lib/supabase/admin.ts` and `app/lib/ai/generate.ts` — never in a `'use client'` module.
+
+- **`sat.questions` has only a `select` RLS policy — users cannot write to it.** The migration deliberately omits an insert/update/delete policy. Authenticated users can read the pool (for the RPC), but any direct write via the anon/authenticated role is denied by RLS. New questions are written exclusively by the generation endpoint via the service-role client (which bypasses RLS). The seed script likewise uses the service-role client.
+
+- **`service_role` needed an explicit `USAGE` grant on the `sat` schema.** Foundation's `20260521000000_sat_schema.sql` granted `USAGE` on `sat` only to `anon` and `authenticated`. The service role's `BYPASSRLS` attribute bypasses row-level security but does NOT grant schema-level privileges — the service role was still blocked from writing `sat.questions`. Migration `20260521040000_sat_service_role_grants.sql` adds `GRANT USAGE ON SCHEMA sat TO service_role` plus full table/sequence privileges. If you add new tables to the `sat` schema that the service role must write, confirm the grants or re-run this migration.
+
+- **`/api/admin/generate-questions` is in `PUBLIC_PATHS` but is secret-gated.** The route is excluded from the session middleware (it has no user session — it is called by Vercel Cron). It authenticates itself with `Authorization: Bearer <CRON_SECRET>` instead. A request without that header returns `401`. Do not add session gating to this route; do not remove it from `PUBLIC_PATHS`.
+
+- **AI-generated explanations are rendered React-escaped — not via `dangerouslySetInnerHTML`.** `ReviewItem.tsx` branches on `question.source`: `'seed'` explanations use `dangerouslySetInnerHTML` (trusted, hand-authored, may contain `<b>` tags); all other sources (i.e. `'ai'`) render via `<span>{question.explanation}</span>` — React escapes the content. The Ollama prompt asks for plain-text explanations, so no formatting is lost. Do not widen `dangerouslySetInnerHTML` to AI-sourced questions.
+
+- **`BANK` is now the seed source and offline fallback only.** The runtime question source is `sat.questions` (via the `draw_questions` RPC in `app/lib/pool.ts`). `useTestSession.start()` is async: it draws from the pool and falls back to `BANK` only if the draw throws or returns empty. Adding questions to `BANK` without re-running the seed script will not make them visible to users at runtime; update `sat.questions` directly, or extend the seed and re-run it.
+
 ## Things that will bite you
 
 - **Answer indices are positional, and choices get shuffled.** In `questions.ts`, `answerIndex` is the index into `choices` *as authored*. `buildTest()` rewrites both arrays in sync — never re-order one without the other.
 - **Section keys are `'rw'` and `'math'`** (not `'reading'`, not `'reading-writing'`). Adding a third section requires updating `SECTION_CONFIG`, `SECTION_ORDER`, and confirming `BANK` entries use the new key.
-- **Explanations render as HTML** via `dangerouslySetInnerHTML` in `app/components/ReviewItem.tsx` — existing entries contain `<b>` tags. Treat `explanation` as trusted authored content; do not pipe user input into it.
+- **Explanations render differently depending on source.** `ReviewItem.tsx` branches on `question.source`: seed explanations (hand-authored, trusted) render via `dangerouslySetInnerHTML`; AI explanations render as React-escaped text. See the AI sub-project gotchas for why — do not collapse these back into a single `dangerouslySetInnerHTML`.
 - **Timer auto-advances on zero.** The `useEffect` on `[screen, secIdx]` in `useTestSession.ts` is what restarts the interval, and `handleTimeUp` defers `setSecIdx` via `setTimeout(..., 0)` to avoid setState-mid-render. Don't "simplify" that.
 - **Scaled score is a fake.** `scaled = round((400 + pct * 1200) / 10) * 10` — a linear stretch of percent-correct into the 400–1600 range, not a real SAT scale. The README and on-screen note both flag this; don't market it as accurate.
 - **`secsPerQ` × question-count = section time.** Adjusting per-question time in `SECTION_CONFIG` silently rescales the whole section timer.
