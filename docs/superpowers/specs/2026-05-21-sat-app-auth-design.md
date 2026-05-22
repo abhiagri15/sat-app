@@ -361,7 +361,7 @@ These are configuration tasks on the Property Ledger Supabase project that **can
 1. **Google Cloud Console** — create an OAuth 2.0 Client ID (type: Web application). Authorized redirect URI: `https://falgykkspbtrwdcchayi.supabase.co/auth/v1/callback`. Copy the client ID and secret.
 2. **Supabase → Authentication → Sign In / Providers → Google** — enable, paste the Google client ID + secret, save.
 3. **Supabase → Authentication → Sign In / Providers → Email** — confirm **"Confirm email" is OFF** (matches A3).
-4. **Supabase → Authentication → URL Configuration** — Site URL `http://localhost:3000`; Redirect URLs allow-list includes `http://localhost:3000/**` (add the production URL when deployed).
+4. **Supabase → Authentication → URL Configuration** — Site URL `https://sat-app-opal.vercel.app` (production); Redirect URLs allow-list includes both `https://sat-app-opal.vercel.app/**` and `http://localhost:3000/**` (local dev). Supabase falls back to the Site URL when a requested `redirectTo` is not in the allow-list, so every deployed origin must be listed.
 5. **Supabase → Settings → API → Exposed schemas** — add `sat` to the list (alongside `public`). Required for the app to read `sat.profiles` through PostgREST (A9).
 
 If Google (1–2) is not yet configured, the "Continue with Google" button will return a provider error — email/password remains fully functional in the meantime.

@@ -38,8 +38,10 @@ one-time dashboard tasks must be completed before the full feature set works:
 
 3. **Email confirmation OFF + URL config** — Authentication → Providers → Email: confirm
    "Confirm email" is OFF (sign-up creates a session immediately). Authentication → URL
-   Configuration: Site URL `http://localhost:3000`; Redirect URLs allow-list includes
-   `http://localhost:3000/**`.
+   Configuration: Site URL `https://sat-app-opal.vercel.app` (production); Redirect URLs
+   allow-list includes both `https://sat-app-opal.vercel.app/**` and
+   `http://localhost:3000/**` (local dev). Supabase falls back to the Site URL when a
+   requested `redirectTo` is not in the allow-list, so every deployed origin must be listed.
 
 Email/password auth works once item 3 is done. Google OAuth works once item 2 is done.
 Profile reads (and thus every authenticated page) work once item 1 is done.
