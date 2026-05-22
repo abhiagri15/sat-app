@@ -25,3 +25,25 @@ export async function setQuestionEnabled(
   revalidatePath('/admin');
   revalidatePath(`/admin/questions/${id}`);
 }
+
+// Resolve a question flag. Admin-only; writes via the service-role client
+// (question_flags has no RLS policy).
+export async function resolveFlag(flagId: string): Promise<void> {
+  const profile = await requireAdmin();
+  const admin = createAdminClient();
+  const { error } = await admin
+    .schema('sat')
+    .from('question_flags')
+    .update({
+      status: 'resolved',
+      resolved_at: new Date().toISOString(),
+      resolved_by: profile.id,
+    })
+    .eq('id', flagId);
+  if (error) {
+    console.error('[resolveFlag] failed:', error);
+    throw new Error('Failed to resolve the flag.');
+  }
+  revalidatePath('/admin/flags');
+  revalidatePath('/admin');
+}
