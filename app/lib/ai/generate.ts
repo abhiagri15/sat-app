@@ -6,8 +6,12 @@ import { SKILLS } from '@/app/lib/questions';
 import { createAdminClient } from '@/app/lib/supabase/admin';
 
 const TARGET_PER_SKILL = 20;   // desired pool depth per (section, skill)
-const MAX_SKILLS_PER_RUN = 2;  // bound per invocation (serverless timeout)
-const PER_SKILL_BATCH = 3;
+// Bounded per invocation to fit the serverless time budget. Each Ollama call
+// (~20-30s for DeepSeek) is slow: 1 skill x batch 2 = 1 generate + up to 2
+// self-verify calls. Survivors are inserted incrementally, so a run cut short
+// still grows the pool; raise these only with a larger `maxDuration`.
+const MAX_SKILLS_PER_RUN = 1;
+const PER_SKILL_BATCH = 2;
 
 export interface GenerationSummary {
   generated: number;

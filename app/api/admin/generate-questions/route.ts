@@ -4,7 +4,9 @@ import { runGeneration } from '@/app/lib/ai/generate';
 // Cron-triggered question generation. Vercel Cron issues GET and (when
 // CRON_SECRET is set in the project) sends `Authorization: Bearer <CRON_SECRET>`.
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// Generation is slow (sequential Ollama calls). Request up to 300s — Vercel Pro
+// honors this; Hobby caps at 60s, where survivors still insert incrementally.
+export const maxDuration = 300;
 
 export async function GET(request: Request) {
   // Fail closed: if CRON_SECRET is unset, reject everything (never accept the
