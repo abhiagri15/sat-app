@@ -25,6 +25,14 @@ export async function AppHeader() {
         >
           Analytics
         </Link>
+        {profile?.role === 'admin' && (
+          <Link
+            href="/admin"
+            className="text-sm text-slate-500 transition-colors hover:text-slate-900"
+          >
+            Admin
+          </Link>
+        )}
       </nav>
       <div className="flex items-center gap-3">
         <span className="text-sm text-slate-600">{displayName}</span>
