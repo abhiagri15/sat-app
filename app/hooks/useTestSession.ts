@@ -9,8 +9,12 @@ import {
   type TestLength,
 } from '@/app/lib/test';
 import { drawTestQuestions } from '@/app/lib/pool';
+import { toAttemptPayload } from '@/app/lib/persistence/payload';
+import { saveAttempt } from '@/app/lib/persistence/actions';
 
 export type Screen = 'start' | 'test' | 'results';
+
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 export interface TestSession {
   // state
@@ -27,6 +31,7 @@ export interface TestSession {
   showReview: boolean;
   toggleReview: () => void;
   loading: boolean;
+  saveStatus: SaveStatus;
   // actions
   start: () => void;
   selectChoice: (i: number) => void;
@@ -48,6 +53,9 @@ export function useTestSession(initialName = ''): TestSession {
   const [remaining, setRemaining] = useState<number[]>([]);
   const [showReview, setShowReview] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  // Guards the save effect so a submitted test is persisted exactly once.
+  const savedRef = useRef(false);
 
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -79,6 +87,25 @@ export function useTestSession(initialName = ''): TestSession {
     return stopTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, secIdx]);
+
+  // Persist the attempt exactly once, when the results screen first appears.
+  // Runs as an effect (not inside finish()) so it reads committed state.
+  useEffect(() => {
+    if (screen !== 'results' || !test || savedRef.current) return;
+    savedRef.current = true;
+    const finalResults = computeResults(test, responses);
+    setSaveStatus('saving');
+    saveAttempt(toAttemptPayload(test, responses, finalResults, testLength))
+      .then((res) => {
+        setSaveStatus(res.ok ? 'saved' : 'error');
+        if (!res.ok) console.error('[useTestSession] saveAttempt failed:', res.error);
+      })
+      .catch((e) => {
+        setSaveStatus('error');
+        console.error('[useTestSession] saveAttempt threw:', e);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen]);
 
   const handleTimeUp = () => {
     stopTimer();
@@ -151,6 +178,8 @@ export function useTestSession(initialName = ''): TestSession {
 
   const newTest = () => {
     stopTimer();
+    savedRef.current = false;
+    setSaveStatus('idle');
     setScreen('start');
   };
 
@@ -161,7 +190,7 @@ export function useTestSession(initialName = ''): TestSession {
   return {
     screen, name, setName, testLength, setTestLength,
     test, secIdx, qIdx, responses, remaining,
-    showReview, toggleReview, loading,
+    showReview, toggleReview, loading, saveStatus,
     start, selectChoice, goToQuestion, submitSection, newTest, results,
   };
 }

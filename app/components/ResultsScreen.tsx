@@ -1,6 +1,7 @@
 'use client';
 
 import type { Test, Results } from '@/app/lib/test';
+import type { SaveStatus } from '@/app/hooks/useTestSession';
 import { ReviewItem } from './ReviewItem';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
@@ -9,13 +10,14 @@ interface ResultsScreenProps {
   test: Test;
   responses: (number | null)[][];
   results: Results;
+  saveStatus: SaveStatus;
   showReview: boolean;
   onToggleReview: () => void;
   onNewTest: () => void;
 }
 
 export function ResultsScreen({
-  test, responses, results, showReview, onToggleReview, onNewTest,
+  test, responses, results, saveStatus, showReview, onToggleReview, onNewTest,
 }: ResultsScreenProps) {
   const { perSection, pct, scaled } = results;
   return (
@@ -51,6 +53,17 @@ export function ResultsScreen({
               {showReview ? 'Hide full review' : 'Show full review'}
             </Button>
           </div>
+          {saveStatus === 'saving' && (
+            <p className="text-sm text-slate-500 mt-3">Saving to your dashboard…</p>
+          )}
+          {saveStatus === 'saved' && (
+            <p className="text-sm text-emerald-700 mt-3">Saved to your dashboard ✓</p>
+          )}
+          {saveStatus === 'error' && (
+            <p className="text-sm text-red-700 mt-3">
+              Couldn’t save this attempt — your history may be incomplete.
+            </p>
+          )}
           <p className="text-sm text-slate-500 mt-3">
             Scaled score is an approximation based on percent correct, for practice motivation only. Focus
             on the explanations below to learn from each question.

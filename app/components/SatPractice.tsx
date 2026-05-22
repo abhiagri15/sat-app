@@ -49,6 +49,7 @@ export default function SatPractice({ studentName }: { studentName: string }) {
         test={s.test}
         responses={s.responses}
         results={s.results}
+        saveStatus={s.saveStatus}
         showReview={s.showReview}
         onToggleReview={s.toggleReview}
         onNewTest={s.newTest}
