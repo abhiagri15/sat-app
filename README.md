@@ -111,6 +111,22 @@ pnpm dlx tsx --env-file=.env.local scripts/seed-questions.ts
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key — **server-only, secret**. Used by the generation endpoint and seed script to write `sat.questions` via the service-role client. Never prefix with `NEXT_PUBLIC_`. |
 | `CRON_SECRET` | Shared secret that authenticates calls to `/api/admin/generate-questions`. Vercel Cron sends it automatically when deployed. |
 
+## Test history & review
+
+Submitting a practice test now persists it to Supabase (`sat` schema). Each submission
+writes one row to `sat.test_attempts` (the attempt summary — score, scaled score, and
+section breakdown) plus one row per question to `sat.attempt_responses`. Both inserts run
+transactionally through the `sat.save_attempt` security-definer RPC: the attempt and all
+of its response rows commit together or not at all.
+
+`/dashboard` lists the signed-in user's past attempts, newest first, each showing the
+score and a per-section breakdown.
+
+`/dashboard/attempts/[id]` opens a read-only review of one attempt — every question with
+the user's answer marked correct, incorrect, or skipped, plus the worked explanation. The
+review reads the question exactly as it was presented during that test (see the gotcha in
+`CLAUDE.md` about why responses snapshot the shuffled choices).
+
 ## Run it locally
 
     pnpm install
@@ -139,7 +155,12 @@ to push the production deployment.
 
 ## Project structure
 - app/(app)/page.tsx                 home route (authenticated), renders the SAT practice test
-- app/(app)/dashboard/page.tsx       dashboard showing the signed-in user; test history placeholder
+- app/(app)/dashboard/page.tsx       dashboard listing the signed-in user's past test attempts
+- app/(app)/dashboard/attempts/[id]/page.tsx  read-only review of one past attempt
+- app/lib/persistence/payload.ts     toAttemptPayload — pure mapper: finished test → save_attempt payload
+- app/lib/persistence/actions.ts     server action: validates the payload and calls the save_attempt RPC
+- app/lib/persistence/queries.ts     listAttempts / getAttempt — reads attempt history from Supabase
+- scripts/check-payload.ts          scripted check for toAttemptPayload (run with tsx; no unit-test runner)
 - app/(auth)/login/page.tsx          sign-in form (email/password + Google)
 - app/(auth)/register/page.tsx       account creation form
 - app/(auth)/forgot-password/page.tsx  password-reset request form
@@ -168,6 +189,7 @@ to push the production deployment.
 - supabase/migrations/20260521010000_sat_profiles.sql   sat.profiles table + RLS + grants
 - supabase/migrations/20260521030000_sat_questions.sql  sat.questions + sat.served_questions + draw_questions RPC
 - supabase/migrations/20260521040000_sat_service_role_grants.sql  grants service_role USAGE on sat schema
+- supabase/migrations/20260521050000_sat_test_attempts.sql  sat.test_attempts + sat.attempt_responses + save_attempt RPC
 
 ## Adding questions
 Open `app/lib/questions.ts` and add objects to the `BANK` array. Each question looks like:

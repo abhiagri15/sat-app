@@ -13,14 +13,20 @@ pnpm lint             # next lint (uses Next.js defaults)
 pnpm type-check       # tsc --noEmit
 ```
 
-There are no tests in this project.
+There is no unit-test runner in this project. The one pure mapper that warrants checking,
+`toAttemptPayload`, is exercised by a scripted assertion file:
+
+```bash
+pnpm dlx tsx scripts/check-payload.ts   # builds a test, maps it, asserts the payload shape
+```
 
 ## Architecture
 
 Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focused modules.
 
 - [app/(app)/page.tsx](app/(app)/page.tsx) — server entry (authenticated), reads the profile, renders `<SatPractice studentName={...} />`.
-- [app/(app)/dashboard/page.tsx](app/(app)/dashboard/page.tsx) — dashboard; shows signed-in user and a test-history placeholder.
+- [app/(app)/dashboard/page.tsx](app/(app)/dashboard/page.tsx) — dashboard; server component, lists the signed-in user's past attempts (newest first) via `listAttempts()`.
+- [app/(app)/dashboard/attempts/[id]/page.tsx](app/(app)/dashboard/attempts/[id]/page.tsx) — read-only review of one attempt via `getAttempt(id)`; `notFound()` if the id is missing or not the user's.
 - [app/(auth)/login/page.tsx](app/(auth)/login/page.tsx) — email/password sign-in + Google OAuth button.
 - [app/(auth)/register/page.tsx](app/(auth)/register/page.tsx) — account creation.
 - [app/(auth)/forgot-password/page.tsx](app/(auth)/forgot-password/page.tsx) — password-reset request.
@@ -44,6 +50,10 @@ Next.js 15 **App Router**, TypeScript, React 19. The app is decomposed into focu
 - [app/lib/ai/generate.ts](app/lib/ai/generate.ts) — `runGeneration()`: checks pool depth per `(section, skill)`, picks the most-depleted skills (at most 2/run, 3 questions/skill), runs the quality gate (zod → self-verify → dedup), and inserts survivors via the service-role client.
 - [app/api/admin/generate-questions/route.ts](app/api/admin/generate-questions/route.ts) — `GET` handler; secret-gated by `CRON_SECRET`; calls `runGeneration()` and returns a JSON summary. In `middleware.ts` `PUBLIC_PATHS` (not session-gated) but requires the bearer secret.
 - [scripts/seed-questions.ts](scripts/seed-questions.ts) — one-time seed script: upserts `BANK` into `sat.questions` (`source='seed'`) via the service-role client. Run with `pnpm dlx tsx --env-file=.env.local scripts/seed-questions.ts`.
+- [app/lib/persistence/payload.ts](app/lib/persistence/payload.ts) — `toAttemptPayload()`: pure mapper from a finished in-memory `Test` + responses + `Results` to the `save_attempt` payload. No I/O. Covered by `scripts/check-payload.ts`.
+- [app/lib/persistence/actions.ts](app/lib/persistence/actions.ts) — `'use server'` `saveAttempt()` action: zod-validates the payload, then calls the `sat.save_attempt` RPC.
+- [app/lib/persistence/queries.ts](app/lib/persistence/queries.ts) — `listAttempts()` / `getAttempt(id)`: read attempt history from `sat.test_attempts` / `sat.attempt_responses` (RLS-scoped to the user).
+- [scripts/check-payload.ts](scripts/check-payload.ts) — scripted assertion file for `toAttemptPayload` (no unit-test runner). Run with `pnpm dlx tsx scripts/check-payload.ts`.
 - [vercel.json](vercel.json) — Vercel Cron: `0 */6 * * *` → `/api/admin/generate-questions`.
 
 `buildTest()` in `app/lib/test.ts` is the test-construction pipeline: filters `BANK` by section, shuffles questions, shuffles each question's choices (remapping the stored `answerIndex` to the new position), and slices to `shortCount` for "Quick" or all questions for "Full". A fresh shuffle runs on every "Start a New Test" — there is no persistence (no localStorage, no backend).
@@ -77,6 +87,14 @@ Path alias `@/*` → `./*` (repo root) is configured in `tsconfig.json`; cross-d
 - **AI-generated explanations are rendered React-escaped — not via `dangerouslySetInnerHTML`.** `ReviewItem.tsx` branches on `question.source`: `'seed'` explanations use `dangerouslySetInnerHTML` (trusted, hand-authored, may contain `<b>` tags); all other sources (i.e. `'ai'`) render via `<span>{question.explanation}</span>` — React escapes the content. The Ollama prompt asks for plain-text explanations, so no formatting is lost. Do not widen `dangerouslySetInnerHTML` to AI-sourced questions.
 
 - **`BANK` is now the seed source and offline fallback only.** The runtime question source is `sat.questions` (via the `draw_questions` RPC in `app/lib/pool.ts`). `useTestSession.start()` is async: it draws from the pool and falls back to `BANK` only if the draw throws or returns empty. Adding questions to `BANK` without re-running the seed script will not make them visible to users at runtime; update `sat.questions` directly, or extend the seed and re-run it.
+
+## Persistence sub-project gotchas
+
+- **`sat.test_attempts` and `sat.attempt_responses` are RLS select-only.** Each table has a `select` policy scoped to `auth.uid()` and *no* insert/update/delete policy — even though Supabase grants table privileges to `authenticated` on exposed-schema tables, RLS with no write policy denies all writes. The only writer is the `sat.save_attempt` security-definer RPC, which bypasses RLS and sets `user_id := auth.uid()` itself. This mirrors the `sat.questions` / `draw_questions` pattern. If you add a write path, go through a security-definer function — do not add a write policy.
+
+- **`attempt_responses` rows snapshot the question as it was presented.** Each row stores the per-test-shuffled `choices`, the remapped `answer_index`, and the `explanation` — not a reference to the live `sat.questions` row. `buildTest()` shuffles each question's choices per test, so a stored `chosen_index` is meaningless against the original question's choice order. The review page (`/dashboard/attempts/[id]`) must read these snapshotted columns; never re-join to `sat.questions` to "freshen" a past attempt.
+
+- **`toAttemptPayload` is checked by a script, not a test runner.** The project still has no unit-test runner. `toAttemptPayload` (the pure mapper in `app/lib/persistence/payload.ts`) is exercised by `scripts/check-payload.ts`, run with `tsx` (`pnpm dlx tsx scripts/check-payload.ts`). If you change the payload shape, update that script too — it is the only automated check on this mapper.
 
 ## Things that will bite you
 
