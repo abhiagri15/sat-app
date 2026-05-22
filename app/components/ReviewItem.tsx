@@ -2,6 +2,7 @@
 
 import { LETTERS } from '@/app/lib/test';
 import type { Question } from '@/app/lib/questions';
+import { FlagQuestion } from './FlagQuestion';
 
 interface ReviewItemProps {
   question: Question;
@@ -59,6 +60,7 @@ export function ReviewItem({ question, chosenIndex }: ReviewItemProps) {
           <span>{question.explanation}</span>
         )}
       </div>
+      <FlagQuestion questionId={question.id} />
     </div>
   );
 }
