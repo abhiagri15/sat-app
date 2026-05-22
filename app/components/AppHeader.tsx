@@ -19,6 +19,12 @@ export async function AppHeader() {
         >
           Dashboard
         </Link>
+        <Link
+          href="/analytics"
+          className="text-sm text-slate-500 transition-colors hover:text-slate-900"
+        >
+          Analytics
+        </Link>
       </nav>
       <div className="flex items-center gap-3">
         <span className="text-sm text-slate-600">{displayName}</span>
