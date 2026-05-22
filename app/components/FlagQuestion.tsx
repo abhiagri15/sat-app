@@ -82,7 +82,12 @@ export function FlagQuestion({ questionId }: { questionId: string }) {
         </button>
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            setOpen(false);
+            setReason('wrong_answer');
+            setComment('');
+            setStatus('idle');
+          }}
           className="rounded px-2.5 py-1 text-xs text-slate-500"
         >
           Cancel

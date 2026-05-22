@@ -22,6 +22,11 @@ export function FlagRow({ flag }: { flag: QuestionFlag }) {
         <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">
           {REASON_LABELS[flag.reason] ?? flag.reason}
         </span>
+        {flag.question_section && (
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">
+            {flag.question_section === 'rw' ? 'R&W' : 'Math'}
+          </span>
+        )}
         {flag.status === 'resolved' && (
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">
             Resolved
