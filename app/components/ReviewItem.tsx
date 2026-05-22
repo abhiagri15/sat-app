@@ -8,9 +8,11 @@ interface ReviewItemProps {
   chosenIndex: number | null;
 }
 
-// NOTE: explanation rendering uses dangerouslySetInnerHTML because seed BANK content
-// contains trusted <b>/<i> tags. The AI sub-project (#2) MUST replace this with a
-// sanitizer or constrained renderer once questions become user-influenced.
+// NOTE: explanation rendering branches on `question.source`. Seed BANK content
+// has trusted <b>/<i> tags and is rendered via dangerouslySetInnerHTML; AI
+// content is rendered as React-escaped text (no HTML). This guard shipped with
+// the AI sub-project (#2) and is relied on by the attempt-review page (#4),
+// which renders snapshotted explanations through this component.
 export function ReviewItem({ question, chosenIndex }: ReviewItemProps) {
   const isCorrect = chosenIndex === question.answerIndex;
   return (
