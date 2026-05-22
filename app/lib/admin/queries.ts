@@ -60,7 +60,11 @@ export async function getQuestion(id: string): Promise<AdminQuestion | null> {
     .select(QUESTION_COLUMNS)
     .eq('id', id)
     .maybeSingle();
-  if (error || !data) return null;
+  if (error) {
+    console.error('[getQuestion] failed:', error);
+    return null;
+  }
+  if (!data) return null;
   return data as unknown as AdminQuestion;
 }
 
