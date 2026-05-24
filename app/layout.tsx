@@ -11,7 +11,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body>
+      {/* suppressHydrationWarning silences false positives from browser
+          extensions (Grammarly, Dark Reader, password managers) that inject
+          data-* attributes into <body> after SSR but before React hydrates.
+          Scoped to <body> only — does NOT affect hydration checks elsewhere. */}
+      <body suppressHydrationWarning>
         <Providers>{children}</Providers>
       </body>
     </html>

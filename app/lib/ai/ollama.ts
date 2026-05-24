@@ -54,9 +54,9 @@ export class OllamaCloudProvider implements AIProvider {
     // `<placeholder>` template — a literal-minded model can echo placeholders.
     const example =
       section === 'rw'
-        ? `{"section":"rw","skill":"${skill}","passage":"A short passage giving the context.",` +
-          `"prompt":"Which choice best completes the text?","choices":["alpha","beta","gamma","delta"],` +
-          `"answerIndex":2,"explanation":"Gamma fits because the passage stresses ..."}`
+        ? `{"section":"rw","skill":"${skill}","passage":"Although critics initially called the design ______, recent reviews praise its bold use of color.",` +
+          `"prompt":"Which choice best completes the text?","choices":["uninspired","captivating","traditional","minimal"],` +
+          `"answerIndex":0,"explanation":"The contrast \\"Although ... recent reviews praise\\" signals the initial reaction was negative; uninspired fits."}`
         : `{"section":"math","skill":"${skill}",` +
           `"prompt":"If 3x + 6 = 18, what is the value of x?","choices":["2","4","6","8"],` +
           `"answerIndex":1,"explanation":"Subtract 6 from both sides, then divide by 3: x = 4."}`;
@@ -70,8 +70,10 @@ export class OllamaCloudProvider implements AIProvider {
         `- "choices" must be an array of exactly 4 distinct strings.\n` +
         `- "answerIndex" must be an integer 0-3: the 0-based index of the correct choice.\n` +
         `- "explanation" must be PLAIN TEXT (no HTML, no markdown) saying why the answer is correct.\n` +
+        `- IMPORTANT: in "explanation", NEVER refer to a choice by its letter or number (no "Choice A", "Option B", "choice 3", etc.). The app shuffles choices per test, so any letter/number reference becomes wrong at runtime. Refer to the chosen option as "the correct choice" or by quoting its content; refer to incorrect ones as "the other choices" / "the option that says X".\n` +
         (section === 'rw'
-          ? `- "passage" must be a short text giving the context the question needs.\n`
+          ? `- "passage" must be a short text giving the context the question needs.\n` +
+            `- If the question requires choosing a word, phrase, verb form, or punctuation mark to INSERT into the passage (sentence completion / cloze), the passage MUST contain exactly one blank marked with six underscores ("______") at the insertion point. Do NOT embed the chosen answer in the passage. For reading-comprehension questions (e.g., main idea, evidence support, transition between sentences as a whole), the passage is a complete text and MUST NOT contain "______".\n`
           : `- Omit "passage" entirely unless the problem genuinely needs a setup.\n`) +
         `Example of one valid array element:\n${example}`,
     );
