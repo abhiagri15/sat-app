@@ -20,10 +20,7 @@ export default async function AdminFlagsPage({
 
   return (
     <main className="mx-auto max-w-3xl p-6">
-      <Link href="/admin" className="text-sm text-blue-600 underline">
-        ← Back to the pool
-      </Link>
-      <h1 className="mb-1 mt-3 text-2xl font-bold">Question flags</h1>
+      <h1 className="mb-1 text-2xl font-bold">Question flags</h1>
       <p className="text-sm text-slate-500">
         User-reported problems with pool questions.
       </p>

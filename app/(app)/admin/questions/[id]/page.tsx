@@ -17,7 +17,7 @@ export default async function AdminQuestionPage({
 
   return (
     <main className="mx-auto max-w-3xl p-6">
-      <Link href="/admin" className="text-sm text-blue-600 underline">
+      <Link href="/admin/questions" className="text-sm text-blue-600 underline">
         ← Back to the pool
       </Link>
 

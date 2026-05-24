@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { getDailyAttemptLimit } from '@/app/lib/config';
 import { setDailyAttemptLimit } from '@/app/lib/admin/actions';
 
@@ -8,10 +7,7 @@ export default async function AdminSettingsPage() {
 
   return (
     <main className="mx-auto max-w-2xl p-6">
-      <Link href="/admin" className="text-sm text-blue-600 underline">
-        ← Back to the pool
-      </Link>
-      <h1 className="mb-1 mt-3 text-2xl font-bold">Settings</h1>
+      <h1 className="mb-1 text-2xl font-bold">Settings</h1>
       <p className="text-sm text-slate-500">App-wide configuration.</p>
 
       <form
