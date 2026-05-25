@@ -1,6 +1,7 @@
 import type { Question, SectionKey } from './questions';
 import { BANK as DEFAULT_BANK, SECTION_CONFIG, SECTION_ORDER } from './questions';
 import { isSprCorrect } from './spr';
+import { scoreSection, projectShort, scoreComposite } from './scoring';
 
 export const LETTERS = ['A', 'B', 'C', 'D', 'E'] as const;
 
@@ -15,18 +16,26 @@ export interface TestSection {
   timeLimit: number;       // seconds
 }
 
+export type TestLength = 'short' | 'full';
+
 export interface Test {
   name: string;
+  length: TestLength;        // needed by computeResults for short-projection branching
   sections: TestSection[];
 }
 
 export interface Results {
-  perSection: { name: string; correct: number; total: number }[];
+  perSection: {
+    name: string;
+    sectionKey: SectionKey;  // routes scoreSection + propagates to the payload
+    correct: number;
+    total: number;
+    scaled: number;          // 200..800 per section
+    projectedRaw?: number;   // set only when the test was 'short'
+  }[];
   pct: number;
-  scaled: number;          // 400..1600, rounded to nearest 10
+  scaled: number;            // composite, 400..1600
 }
-
-export type TestLength = 'short' | 'full';
 
 export function shuffle<T>(arr: T[]): T[] {
   const a = arr.slice();
@@ -67,7 +76,7 @@ export function buildTest(
       timeLimit: count * cfg.secsPerQ,
     };
   });
-  return { name: name || 'Student', sections };
+  return { name: name || 'Student', length: testLength, sections };
 }
 
 export function computeResults(
@@ -94,10 +103,33 @@ export function computeResults(
     });
     totalCorrect += correct;
     totalQ += sec.questions.length;
-    return { name: sec.name, correct, total: sec.questions.length };
+    // For 'short' tests, projectShort projects raw% onto fullCount; for
+    // 'full', it's a direct lookup. Both branch through scoring.ts so the
+    // SQL mirror (sat.scale_section) sees the same shape.
+    if (test.length === 'short') {
+      const p = projectShort(sec.key, correct, sec.questions.length);
+      return {
+        name: sec.name,
+        sectionKey: sec.key,
+        correct,
+        total: sec.questions.length,
+        scaled: p.scaled,
+        projectedRaw: p.projectedRaw,
+      };
+    }
+    return {
+      name: sec.name,
+      sectionKey: sec.key,
+      correct,
+      total: sec.questions.length,
+      scaled: scoreSection(sec.key, correct),
+    };
   });
   const pct = totalQ ? totalCorrect / totalQ : 0;
-  const scaled = Math.round((400 + pct * 1200) / 10) * 10;
+  const scaled = scoreComposite(
+    perSection[0]?.scaled ?? 200,
+    perSection[1]?.scaled ?? 200,
+  );
   return { perSection, pct, scaled };
 }
 

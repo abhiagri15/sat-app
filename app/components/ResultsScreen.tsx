@@ -20,6 +20,7 @@ export function ResultsScreen({
   test, responses, results, saveStatus, showReview, onToggleReview, onNewTest,
 }: ResultsScreenProps) {
   const { perSection, pct, scaled } = results;
+  const isShort = test.length === 'short';
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-5 pt-6 pb-16">
       <Card>
@@ -29,23 +30,34 @@ export function ResultsScreen({
           </span>
           <h1 className="text-3xl font-semibold mb-1.5">Your results</h1>
           <div className="text-center py-2 pb-4">
-            <div className="text-6xl font-extrabold text-blue-600 leading-none">{scaled}</div>
-            <div className="text-slate-500 mt-1.5">Estimated SAT score (400–1600)</div>
+            <div className="text-6xl font-extrabold text-blue-600 leading-none">
+              {scaled}
+              {isShort && (
+                <span className="ml-2 align-middle text-base font-normal text-slate-400">
+                  (projected)
+                </span>
+              )}
+            </div>
+            <div className="text-slate-500 mt-1.5">Composite (400–1600)</div>
           </div>
           <div className="h-3 rounded-full bg-slate-200 overflow-hidden my-4 mb-1.5">
             <span className="block h-full bg-blue-600" style={{ width: `${Math.round(pct * 100)}%` }} />
           </div>
-          <div className="flex flex-wrap gap-3.5 my-4">
+          <div className="grid grid-cols-1 gap-3 my-4 sm:grid-cols-2">
             {perSection.map((s) => (
-              <div key={s.name} className="bg-slate-50 rounded-md px-4 py-2.5 text-center min-w-[120px]">
-                <div className="text-2xl font-bold">{s.correct}/{s.total}</div>
-                <div className="text-xs text-slate-500 mt-0.5">{s.name}</div>
+              <div key={s.sectionKey} className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500">{s.name}</div>
+                <div className="mt-1 text-3xl font-bold text-slate-900">{s.scaled}</div>
+                <div className="mt-1 text-xs text-slate-600">
+                  {s.correct} / {s.total} correct
+                  {s.projectedRaw !== undefined && (
+                    <span className="ml-2 text-slate-400">
+                      (projected from {s.correct}/{s.total})
+                    </span>
+                  )}
+                </div>
               </div>
             ))}
-            <div className="bg-slate-50 rounded-md px-4 py-2.5 text-center min-w-[120px]">
-              <div className="text-2xl font-bold">{Math.round(pct * 100)}%</div>
-              <div className="text-xs text-slate-500 mt-0.5">Overall correct</div>
-            </div>
           </div>
           <div className="flex flex-wrap gap-2.5 mt-2">
             <Button onClick={onNewTest}>Start a New Test</Button>
@@ -65,8 +77,8 @@ export function ResultsScreen({
             </p>
           )}
           <p className="text-sm text-slate-500 mt-3">
-            Scaled score is an approximation based on percent correct, for practice motivation only. Focus
-            on the explanations below to learn from each question.
+            Scored using a College Board–published Digital SAT scoring curve. Adaptive module
+            scoring is not yet applied.
           </p>
         </CardContent>
       </Card>

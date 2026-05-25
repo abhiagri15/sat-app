@@ -26,6 +26,7 @@ export const attemptPayloadSchema = z.object({
     .array(
       z.object({
         name: z.string().min(1),
+        sectionKey: z.enum(['rw', 'math']),    // server routes scale_section on this
         correct: z.number().int().min(0),
         total: z.number().int().min(0),
       }),

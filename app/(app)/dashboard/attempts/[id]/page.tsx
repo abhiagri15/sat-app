@@ -29,19 +29,25 @@ export default async function AttemptReviewPage({
       <div className="mt-3 flex flex-wrap items-baseline gap-4">
         <div className="text-4xl font-extrabold text-blue-600">
           {attempt.scaled_score}
+          {attempt.test_length === 'short' && (
+            <span className="ml-2 align-middle text-sm font-normal text-slate-400">
+              (projected)
+            </span>
+          )}
         </div>
         <div className="text-slate-600">
           {attempt.total_correct}/{attempt.total_questions} correct
         </div>
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {attempt.section_breakdown.map((s) => (
-          <span
-            key={s.name}
-            className="rounded bg-slate-50 px-2 py-1 text-xs text-slate-600"
-          >
-            {s.name}: {s.correct}/{s.total}
-          </span>
+          <div key={s.sectionKey} className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500">{s.name}</div>
+            <div className="mt-1 text-2xl font-bold text-slate-900">{s.scaled}</div>
+            <div className="mt-1 text-xs text-slate-600">
+              {s.correct} / {s.total} correct
+            </div>
+          </div>
         ))}
       </div>
 

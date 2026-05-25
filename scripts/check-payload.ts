@@ -38,6 +38,12 @@ assert(payload.scaledScore >= 400 && payload.scaledScore <= 1600,
   `scaledScore ${payload.scaledScore} within 400..1600`);
 assert(payload.sectionBreakdown.length === test.sections.length,
   'sectionBreakdown has one entry per section');
+for (const [i, entry] of payload.sectionBreakdown.entries()) {
+  assert(
+    entry.sectionKey === 'rw' || entry.sectionKey === 'math',
+    `sectionBreakdown[${i}].sectionKey === 'rw' | 'math'`,
+  );
+}
 
 const sec0 = payload.responses.filter((r) => r.sectionKey === test.sections[0].key);
 assert(sec0.length > 0 && sec0.every((r) => r.isCorrect),

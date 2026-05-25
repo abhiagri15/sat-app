@@ -33,7 +33,7 @@ export interface AttemptPayload {
   totalCorrect: number;
   totalQuestions: number;
   scaledScore: number;
-  sectionBreakdown: { name: string; correct: number; total: number }[];
+  sectionBreakdown: { name: string; sectionKey: SectionKey; correct: number; total: number }[];
   responses: AttemptResponsePayload[];
 }
 
@@ -95,7 +95,18 @@ export function toAttemptPayload(
     totalCorrect,
     totalQuestions,
     scaledScore: results.scaled,
-    sectionBreakdown: results.perSection,
+    // Explicit map: pick only the fields the wire format needs. The
+    // passthrough form (`results.perSection`) would also carry `scaled`
+    // and `projectedRaw` — zod's default strip mode would drop them
+    // silently, but a future `.strict()` swap (or a non-zod consumer)
+    // would break. `scaled` is server-computed in sat.save_attempt; do
+    // not send a client value for it.
+    sectionBreakdown: results.perSection.map((s) => ({
+      name: s.name,
+      sectionKey: s.sectionKey,
+      correct: s.correct,
+      total: s.total,
+    })),
     responses: attemptResponses,
   };
 }
