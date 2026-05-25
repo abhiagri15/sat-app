@@ -54,6 +54,26 @@ export function TestScreen(props: TestScreenProps) {
         remaining={remaining}
       />
       <div className="mx-auto max-w-3xl px-4 sm:px-5 pt-6 pb-16">
+        {testLength === 'full' && (
+          <div className="mb-3 flex items-center gap-2 text-xs text-slate-500">
+            <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
+              {section.name} · Module {modIdx + 1} of {section.modules.length}
+            </span>
+            {modIdx === 1 && section.module2Path && (
+              <span
+                className={`rounded px-2 py-0.5 font-medium ${
+                  section.module2Path === 'harder'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-blue-100 text-blue-800'
+                }`}
+                title="Path chosen by Module 1 performance"
+              >
+                Adaptive: {section.module2Path === 'harder' ? 'Harder' : 'Easier'}
+              </span>
+            )}
+          </div>
+        )}
+
         {isMath && (
           <div className="mb-3 flex flex-wrap gap-2">
             <button

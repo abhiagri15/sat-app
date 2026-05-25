@@ -47,6 +47,11 @@ export default async function AttemptReviewPage({
             <div className="mt-1 text-xs text-slate-600">
               {s.correct} / {s.total} correct
             </div>
+            {s.module2Path && (
+              <div className="mt-1 text-xs text-slate-500">
+                Module 2: {s.module2Path === 'harder' ? 'Harder' : 'Easier'} path
+              </div>
+            )}
           </div>
         ))}
       </div>

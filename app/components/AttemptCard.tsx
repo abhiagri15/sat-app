@@ -39,6 +39,11 @@ export function AttemptCard({ attempt }: { attempt: AttemptSummary }) {
             className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700"
           >
             {s.sectionKey === 'rw' ? 'R&W' : 'Math'} {s.scaled}
+            {s.module2Path && (
+              <span className="ml-1 text-slate-500">
+                ({s.module2Path === 'harder' ? 'Harder' : 'Easier'})
+              </span>
+            )}
           </span>
         ))}
         {attempt.test_length === 'short' && (
