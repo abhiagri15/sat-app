@@ -20,7 +20,7 @@ exercised by scripted assertion files:
 pnpm dlx tsx scripts/check-payload.ts     # builds a test, maps it, asserts the payload shape
 pnpm dlx tsx scripts/check-analytics.ts   # asserts the analytics compute helpers
 pnpm dlx tsx scripts/check-spr.ts         # asserts the SPR (grid-in) parser + answer comparison
-pnpm dlx tsx scripts/check-scoring.ts     # asserts the SAT scaled-score curve + JS↔SQL parity
+pnpm dlx tsx scripts/check-scoring.ts     # asserts the SAT scaled-score curves (short + 4 adaptive) + JS↔SQL parity
 ```
 
 ## Architecture
@@ -149,6 +149,22 @@ The scoring sub-project has landed: scaled scores come from a real College Board
 - **Curve length is bound to `SECTION_CONFIG[section].fullCount`.** If you change a section's `fullCount` (e.g. when sub-project #11 doubles the section to two modules), regenerate the curve to match (one new index per added question). `check-scoring.ts` fails the build until you do. Short-test projection auto-tracks `fullCount` changes — it uses the current value as the denominator.
 - **`CURVE_VERSION` is a sentinel asserted in `check-scoring.ts`.** Bumping the published-table source (e.g. switching from Practice Test 1 to Practice Test 2) requires bumping the sentinel AND updating both array literals (TS + SQL) AND re-running the backfill UPDATE in a new migration. Users will see a one-time score-trend shift on the swap day; the rewritten disclaimer on `ResultsScreen` frames the score as an estimate, not a transcript.
 - **Backfill skipped any row with an unrecognised section name.** The migration's `where not exists` filter excludes rows whose `section_breakdown` has an entry with a `name` outside `{'Reading & Writing', 'Math'}`. Those rows keep their old linear `scaled_score`. The first apply reported 12/12 updated, 0 skipped — but if you add a third section in the future, also extend the backfill CASE expression.
+
+## Adaptive Test Structure sub-project gotchas
+
+The adaptive sub-project has landed (sub-project #11): each full-test section is delivered as **Module 1 (fixed, mixed difficulty)** followed by **Module 2 (Easier or Harder)** based on Module 1 performance. Short tests stay non-adaptive.
+
+- **`sat.scale_section(p_section, p_correct, p_total, p_test_length, p_module2_path)` requires a non-null path for full tests** — it raises rather than silently mis-scoring. If you see `'full-test scoring requires p_module2_path (got NULL)'` in logs, the bug is upstream (forgotten zod field, stale payload mapper). Short tests pass `null` deliberately; full tests must always pass `'easier'` or `'harder'`.
+- **Four new curves (`RW_FULL_EASIER_CURVE`, `RW_FULL_HARDER_CURVE`, `MATH_FULL_EASIER_CURVE`, `MATH_FULL_HARDER_CURVE`)** of length 55/55/45/45 mirror SQL `array[]` literals inside `sat.scale_section`'s full-test branch. Same drift discipline as the short curves. The `check-scoring.ts` parity battery covers all six curves; the **path-inequality assertion** (Harder ≥ Easier at every raw count) guards calibration direction. `CURVE_VERSION` bumps to `'dsat-pt1-2024-09+adaptive'`.
+- **`SECTION_CONFIG.fullCount` is gone — use `moduleSize` (per-module question count) + `modulesPerSection` (currently always 2).** `fullSectionCount(section)` returns `moduleSize * modulesPerSection` (54 R&W / 44 Math). Anywhere the old `fullCount` was used got renamed to `moduleSize` because they were 1:1 numerically.
+- **`Test.length: TestLength` drives the scoring branch.** `computeResults` branches on it: short → `projectShort/scoreSection`; full → `scoreFullSection(section, correct, path)`. `Test.sections[i].modules[]` is length 1 for short, 1 → 2 for full (Module 2 is appended via `appendModule2` after the Module 1 routing decision).
+- **Module 2 draw is lazy** — runs after Module 1 submit, with the path decided client-side from `sat.app_config.module2_threshold_pct` (default 60). The runner shows a brief loading state while `drawModule2` runs. If the tab closes mid-test, the in-progress attempt is lost (same as today).
+- **`responses` matrix is 3-D**: `responses[secIdx][modIdx][qIdx]`. `remaining` is 2-D: `remaining[secIdx][modIdx]` (per-module timer). The payload mapper iterates `section.modules[m].questions` and sets `moduleIndex` per response (0|1 for full, null for short).
+- **The per-skill floor gate is now per-difficulty.** Each `(section, skill, difficulty)` cell needs ≥ `SKILL_FLOOR` (3) enabled questions before the floor stops firing. After backfill, the existing 320 rows are all `difficulty='medium'`; the easy/hard cells start at 0 and refill via the generator until rows are manually classified (the admin override on `/admin/questions/[id]` lets you set difficulty per row).
+- **Routing threshold is `sat.app_config.module2_threshold_pct` (default 60).** The cutoff math is `ceil(moduleSize * threshold / 100)` — so 60% with moduleSize=27 means 16 correct → Easier, 17 → Harder. Math: 13 → Easier, 14 → Harder. Tunable at runtime (admin can update `app_config` directly; no UI yet).
+- **`fillSlot` 3-tier fallback preserves the moduleSize invariant.** Tier 1 = requested difficulty; Tier 2 = medium backfill; Tier 3 = any-difficulty. Every call returns exactly `moduleSize` questions (or fewer ONLY on cold start, where `buildFallbackBank` via `BANK` kicks in).
+- **The hourly n8n generator workflow (`jDjJIthvf6EyKwgR`) is NOT yet difficulty-aware** — it continues producing rows that default to `difficulty='medium'` via the SQL default. The Vercel daily cron path (`app/lib/ai/generate.ts`) IS difficulty-aware and balances depth per `(section, skill, difficulty)` cell. Update the n8n workflow at the same time as a future SAT Difficulty Classifier workflow.
+- **`buildTest` accepts an optional `module1Bank?: Record<SectionKey, Question[]>`.** When omitted, it falls back to `buildFallbackBank()` which shuffles `BANK` per section. This is the offline path used by `useTestSession.start()`'s catch branch when the pool draw fails. The fallback doesn't honor the 9/9/9 composition rule — that's by design (`BANK` doesn't carry difficulty tags).
 
 ## Persistence sub-project gotchas
 

@@ -165,10 +165,38 @@ axis. The `(projected)` muted-grey label on the score block makes the
 projection explicit.
 
 `scaled_score` is computed server-side by `sat.save_attempt` from the
-per-section `correct/total/test_length` — the client cannot tamper
-with it. The published-curve version is tracked by a `CURVE_VERSION`
-sentinel in [app/lib/scoring.ts](app/lib/scoring.ts); switching curves
-is a deliberate code change, not a silent rescore.
+per-section `correct/total/test_length/module2_path` — the client
+cannot tamper with it. The published-curve version is tracked by a
+`CURVE_VERSION` sentinel in [app/lib/scoring.ts](app/lib/scoring.ts);
+switching curves is a deliberate code change, not a silent rescore.
+
+For **full tests**, the score depends on which Module 2 path was taken.
+Module 1 performance determines whether you continue with the Easier
+or Harder Module 2; each section then scores against one of four
+adaptive curves (`RW_FULL_EASIER`, `RW_FULL_HARDER`, `MATH_FULL_EASIER`,
+`MATH_FULL_HARDER`). Easier-path scores cap around 600 per section;
+Harder-path scores can reach 800. Short tests are non-adaptive and use
+the original single-module curves.
+
+## Adaptive Test Structure
+
+Full tests deliver each section in **two modules** back-to-back —
+exactly like the real Digital SAT:
+
+- **Module 1**: a fixed mixed-difficulty set (1/3 easy + 1/3 medium +
+  1/3 hard). 27 questions for R&W, 22 for Math.
+- **Module 2**: drawn after Module 1 submit. Two paths:
+  - **Easier** — if you got below the routing threshold in Module 1
+  - **Harder** — if you got at or above the threshold
+
+Composition for Module 2 is roughly 70% primary (easy on the Easier
+path, hard on the Harder path) + 30% medium, drawn fresh from the
+pool with a 3-tier fallback if a specific cell is thin.
+
+The routing threshold is stored in `sat.app_config.module2_threshold_pct`
+(default 60%). The path is surfaced in the test UI ("Adaptive: Harder")
+and on the results page ("Module 2: Easier path"). Short tests do not
+use modules — they're a non-adaptive practice variant.
 
 ## Analytics
 
@@ -328,6 +356,7 @@ to push the production deployment.
 - supabase/migrations/20260525020000_sat_attempt_responses_format.sql  adds response_format / entered_value / correct_answer / answer_tolerance to sat.attempt_responses
 - supabase/migrations/20260525030000_sat_spr_helpers.sql        sat.spr_to_numeric + sat.spr_is_correct helpers; save_attempt joins to sat.questions for SPR canonical
 - supabase/migrations/20260525040000_sat_real_scoring.sql       sat.scale_section + save_attempt recreation + backfill UPDATE (real per-section curve)
+- supabase/migrations/20260525050000_sat_adaptive_schema.sql    Adaptive structure: difficulty column, module_index, module2_threshold_pct, draw_questions/scale_section extensions, 4 new curves, save_attempt recreation
 
 ## Adding questions
 Open `app/lib/questions.ts` and add objects to the `BANK` array. Each question looks like:
