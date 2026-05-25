@@ -9,10 +9,12 @@ export default function SatPractice({
   studentName,
   attemptsUsedToday,
   dailyAttemptLimit,
+  hideModule2Path = false,
 }: {
   studentName: string;
   attemptsUsedToday: number;
   dailyAttemptLimit: number;
+  hideModule2Path?: boolean;
 }) {
   const s = useTestSession(studentName);
 
@@ -29,6 +31,7 @@ export default function SatPractice({
         loading={s.loading}
         dailyAttemptLimit={dailyAttemptLimit}
         attemptsRemaining={attemptsRemaining}
+        hideModule2Path={hideModule2Path}
       />
     );
   }
@@ -55,6 +58,7 @@ export default function SatPractice({
         onPrev={() => s.goToQuestion(Math.max(0, s.qIdx - 1))}
         onNext={() => s.goToQuestion(Math.min(mod.questions.length - 1, s.qIdx + 1))}
         onSubmitModule={s.submitModule}
+        hideModule2Path={hideModule2Path}
       />
     );
   }

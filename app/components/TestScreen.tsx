@@ -24,12 +24,14 @@ interface TestScreenProps {
   onPrev: () => void;
   onNext: () => void;
   onSubmitModule: () => void;
+  hideModule2Path?: boolean;
 }
 
 export function TestScreen(props: TestScreenProps) {
   const {
     section, secIdx, modIdx, totalSections, qIdx, sectionResponses, remaining,
     studentName, testLength, onAnswer, onGoToQuestion, onPrev, onNext, onSubmitModule,
+    hideModule2Path = false,
   } = props;
   const mod = section.modules[modIdx];
   const question = mod.questions[qIdx];
@@ -59,7 +61,7 @@ export function TestScreen(props: TestScreenProps) {
             <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
               {section.name} · Module {modIdx + 1} of {section.modules.length}
             </span>
-            {modIdx === 1 && section.module2Path && (
+            {modIdx === 1 && section.module2Path && !hideModule2Path && (
               <span
                 className={`rounded px-2 py-0.5 font-medium ${
                   section.module2Path === 'harder'

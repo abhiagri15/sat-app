@@ -5,6 +5,7 @@ import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
 import { Label } from '@/app/components/ui/label';
 import { cn } from '@/app/lib/utils';
+import { setHideModule2Path } from '@/app/lib/auth/preferences';
 
 interface StartScreenProps {
   testLength: TestLength;
@@ -13,6 +14,7 @@ interface StartScreenProps {
   loading: boolean;
   dailyAttemptLimit: number;
   attemptsRemaining: number;
+  hideModule2Path: boolean;
 }
 
 export function StartScreen({
@@ -22,6 +24,7 @@ export function StartScreen({
   loading,
   dailyAttemptLimit,
   attemptsRemaining,
+  hideModule2Path,
 }: StartScreenProps) {
   const limitReached = attemptsRemaining <= 0;
   return (
@@ -86,6 +89,27 @@ export function StartScreen({
             Tip: the timer counts down per section, just like the real SAT. When time runs out, the
             section auto-advances.
           </p>
+
+          <form action={setHideModule2Path} className="mt-4 border-t border-slate-200 pt-4">
+            <label className="flex items-start gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                name="hide"
+                defaultChecked={hideModule2Path}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600"
+              />
+              <span>
+                Hide the &quot;Adaptive: Easier/Harder&quot; badge during Module 2 — matches the real
+                Digital SAT, which doesn&apos;t show students which path they took.
+                <button
+                  type="submit"
+                  className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-200"
+                >
+                  Save preference
+                </button>
+              </span>
+            </label>
+          </form>
         </CardContent>
       </Card>
     </div>

@@ -240,7 +240,7 @@ export function useTestSession(initialName = ''): TestSession {
           correct++;
         }
       });
-      const threshold = await getModule2ThresholdPct();
+      const threshold = await getModule2ThresholdPct(sec.key);
       const moduleSize = SECTION_CONFIG[sec.key].moduleSize;
       const cutoff = Math.ceil((moduleSize * threshold) / 100);
       const path: 'easier' | 'harder' = correct >= cutoff ? 'harder' : 'easier';
