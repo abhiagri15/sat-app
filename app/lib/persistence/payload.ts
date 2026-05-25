@@ -9,7 +9,7 @@ import { isSprCorrect } from '@/app/lib/spr';
 export interface AttemptResponsePayload {
   sectionKey: SectionKey;
   sectionName: string;
-  position: number;                // 0-indexed within the section
+  position: number;                // 0-indexed within the section (across modules)
   questionId: string;
   skill: string;
   source: 'seed' | 'ai';
@@ -45,54 +45,61 @@ export interface AttemptPayload {
 }
 
 // Pure: maps a finished in-memory test into the persisted payload. No I/O.
-// Branches per question on response_format: mcq writes chosenIndex from the
-// numeric responses[si][qi]; spr writes enteredValue from the string.
-// isCorrect is computed here (JS) AND server-side (sat.spr_is_correct via
-// save_attempt) — the server is the source of truth, this value is a hint
-// used for the immediate post-submit results screen.
+// Iterates the 3-D responses matrix ([section][module][question]); per
+// response sets `moduleIndex` to the module ordinal (0|1) on full tests
+// and null on short. Branches per question on response_format: mcq writes
+// chosenIndex from the numeric response; spr writes enteredValue from the
+// string. isCorrect is computed here (JS) AND server-side (sat.spr_is_correct
+// via save_attempt) — the server is the source of truth; this value is a
+// hint used for the immediate post-submit results screen.
 export function toAttemptPayload(
   test: Test,
-  responses: ResponseValue[][],
+  responses: ResponseValue[][][],
   results: Results,
   testLength: TestLength,
 ): AttemptPayload {
   const attemptResponses: AttemptResponsePayload[] = [];
   for (let si = 0; si < test.sections.length; si++) {
     const section = test.sections[si];
-    for (let qi = 0; qi < section.questions.length; qi++) {
-      const q = section.questions[qi];
-      const v = responses[si]?.[qi] ?? null;
-      const isSpr = q.response_format === 'spr';
+    let position = 0;
+    for (let mi = 0; mi < section.modules.length; mi++) {
+      const mod = section.modules[mi];
+      for (let qi = 0; qi < mod.questions.length; qi++) {
+        const q = mod.questions[qi];
+        const v = responses[si]?.[mi]?.[qi] ?? null;
+        const isSpr = q.response_format === 'spr';
 
-      const chosenIndex = !isSpr && typeof v === 'number' ? v : null;
-      const enteredValue = isSpr && typeof v === 'string' ? v : null;
+        const chosenIndex = !isSpr && typeof v === 'number' ? v : null;
+        const enteredValue = isSpr && typeof v === 'string' ? v : null;
 
-      const isCorrect = isSpr
-        ? enteredValue !== null &&
-          q.correct_answer != null &&
-          isSprCorrect(enteredValue, q.correct_answer, q.answer_tolerance ?? null)
-        : chosenIndex === q.answerIndex;
+        const isCorrect = isSpr
+          ? enteredValue !== null &&
+            q.correct_answer != null &&
+            isSprCorrect(enteredValue, q.correct_answer, q.answer_tolerance ?? null)
+          : chosenIndex === q.answerIndex;
 
-      attemptResponses.push({
-        sectionKey: section.key,
-        sectionName: section.name,
-        position: qi,
-        questionId: q.id,
-        skill: q.skill,
-        source: q.source,
-        passage: q.passage ?? null,
-        prompt: q.prompt,
-        choices: q.choices,
-        answerIndex: q.answerIndex,
-        explanation: q.explanation,
-        responseFormat: isSpr ? 'spr' : 'mcq',
-        chosenIndex,
-        enteredValue,
-        correctAnswer: q.correct_answer ?? null,
-        answerTolerance: q.answer_tolerance ?? null,
-        isCorrect,
-        moduleIndex: null,   // Commit 1: default null. Commit 2's mapper wires per-module index.
-      });
+        attemptResponses.push({
+          sectionKey: section.key,
+          sectionName: section.name,
+          position,
+          questionId: q.id,
+          skill: q.skill,
+          source: q.source,
+          passage: q.passage ?? null,
+          prompt: q.prompt,
+          choices: q.choices,
+          answerIndex: q.answerIndex,
+          explanation: q.explanation,
+          responseFormat: isSpr ? 'spr' : 'mcq',
+          chosenIndex,
+          enteredValue,
+          correctAnswer: q.correct_answer ?? null,
+          answerTolerance: q.answer_tolerance ?? null,
+          isCorrect,
+          moduleIndex: testLength === 'short' ? null : mi,
+        });
+        position++;
+      }
     }
   }
   const totalCorrect = results.perSection.reduce((sum, s) => sum + s.correct, 0);
@@ -114,7 +121,7 @@ export function toAttemptPayload(
       sectionKey: s.sectionKey,
       correct: s.correct,
       total: s.total,
-      module2Path: null,   // Commit 1: default null. Commit 2's mapper wires the path from computeResults.
+      module2Path: s.module2Path ?? null,
     })),
     responses: attemptResponses,
   };

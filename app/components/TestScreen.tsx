@@ -11,25 +11,30 @@ import { ReferencePanel } from './ReferencePanel';
 interface TestScreenProps {
   section: TestSection;
   secIdx: number;
+  modIdx: number;
   totalSections: number;
   qIdx: number;
+  // Module-scoped slice: the per-question responses for the active module.
   sectionResponses: ResponseValue[];
   remaining: number;
   studentName: string;
+  testLength: 'short' | 'full';
   onAnswer: (value: number | string) => void;
   onGoToQuestion: (qi: number) => void;
   onPrev: () => void;
   onNext: () => void;
-  onSubmitSection: () => void;
+  onSubmitModule: () => void;
 }
 
 export function TestScreen(props: TestScreenProps) {
   const {
-    section, secIdx, totalSections, qIdx, sectionResponses, remaining,
-    studentName, onAnswer, onGoToQuestion, onPrev, onNext, onSubmitSection,
+    section, secIdx, modIdx, totalSections, qIdx, sectionResponses, remaining,
+    studentName, testLength, onAnswer, onGoToQuestion, onPrev, onNext, onSubmitModule,
   } = props;
-  const question = section.questions[qIdx];
+  const mod = section.modules[modIdx];
+  const question = mod.questions[qIdx];
   const isLastSection = secIdx === totalSections - 1;
+  const isLastModule = modIdx === section.modules.length - 1;
   const isMath = section.key === 'math';
 
   // Calculator + Reference panels are Math-only tools. State lives at this
@@ -44,7 +49,7 @@ export function TestScreen(props: TestScreenProps) {
       <TopBar
         secIdx={secIdx}
         qIdx={qIdx}
-        totalQ={section.questions.length}
+        totalQ={mod.questions.length}
         studentName={studentName}
         remaining={remaining}
       />
@@ -78,15 +83,18 @@ export function TestScreen(props: TestScreenProps) {
           onPrev={onPrev}
           onNext={onNext}
           isFirst={qIdx === 0}
-          isLast={qIdx === section.questions.length - 1}
+          isLast={qIdx === mod.questions.length - 1}
         />
         <QuestionNavigator
           section={section}
+          modIdx={modIdx}
           qIdx={qIdx}
           sectionResponses={sectionResponses}
           onGoToQuestion={onGoToQuestion}
-          onSubmitSection={onSubmitSection}
+          onSubmitModule={onSubmitModule}
           isLastSection={isLastSection}
+          isLastModule={isLastModule}
+          testLength={testLength}
         />
       </div>
 

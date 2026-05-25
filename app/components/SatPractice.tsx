@@ -36,22 +36,25 @@ export default function SatPractice({
   if (s.screen === 'test' && s.test) {
     const section = s.test.sections[s.secIdx];
     const totalSections = s.test.sections.length;
-    const sectionResponses = s.responses[s.secIdx] ?? [];
-    const remaining = s.remaining[s.secIdx] ?? 0;
+    const mod = section.modules[s.modIdx];
+    const sectionResponses = s.responses[s.secIdx]?.[s.modIdx] ?? [];
+    const remaining = s.remaining[s.secIdx]?.[s.modIdx] ?? 0;
     return (
       <TestScreen
         section={section}
         secIdx={s.secIdx}
+        modIdx={s.modIdx}
         totalSections={totalSections}
         qIdx={s.qIdx}
         sectionResponses={sectionResponses}
         remaining={remaining}
         studentName={s.test.name}
+        testLength={s.test.length}
         onAnswer={s.setAnswer}
         onGoToQuestion={s.goToQuestion}
         onPrev={() => s.goToQuestion(Math.max(0, s.qIdx - 1))}
-        onNext={() => s.goToQuestion(Math.min(section.questions.length - 1, s.qIdx + 1))}
-        onSubmitSection={s.submitSection}
+        onNext={() => s.goToQuestion(Math.min(mod.questions.length - 1, s.qIdx + 1))}
+        onSubmitModule={s.submitModule}
       />
     );
   }

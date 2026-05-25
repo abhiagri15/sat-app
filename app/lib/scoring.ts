@@ -123,7 +123,7 @@ export function projectShort(
   correct: number,
   total: number,
 ): { scaled: number; projectedRaw: number } {
-  const fullCount = SECTION_CONFIG[section].fullCount;
+  const fullCount = SECTION_CONFIG[section].moduleSize;
   const pct = total > 0 ? correct / total : 0;
   const projectedRaw = Math.round(pct * fullCount);
   return { scaled: scoreSection(section, projectedRaw), projectedRaw };

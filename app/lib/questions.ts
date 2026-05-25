@@ -402,12 +402,19 @@ export const BANK: Question[] = [
 ];
 
 export const SECTION_CONFIG = {
-  rw: { name: 'Reading & Writing', shortCount: 10, fullCount: 27, secsPerQ: 90 },
-  math: { name: 'Math', shortCount: 10, fullCount: 22, secsPerQ: 105 },
+  rw:   { name: 'Reading & Writing', shortCount: 10, moduleSize: 27, modulesPerSection: 2, secsPerQ: 90  },
+  math: { name: 'Math',              shortCount: 10, moduleSize: 22, modulesPerSection: 2, secsPerQ: 105 },
 } as const;
 
 export const SECTION_ORDER = ['rw', 'math'] as const;
 export type SectionKey = (typeof SECTION_ORDER)[number];
+
+// Total questions across a section when the test is 'full' (sum of all
+// modules). For 'short', the count is `shortCount` (one module only).
+export function fullSectionCount(s: SectionKey): number {
+  const c = SECTION_CONFIG[s];
+  return c.moduleSize * c.modulesPerSection;   // 54 / 44
+}
 
 // The skill taxonomy the AI generator targets — covers all College Board
 // Digital SAT domains (R&W: Craft and Structure, Information and Ideas,

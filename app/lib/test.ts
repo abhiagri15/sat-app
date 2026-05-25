@@ -1,7 +1,7 @@
 import type { Question, SectionKey } from './questions';
-import { BANK as DEFAULT_BANK, SECTION_CONFIG, SECTION_ORDER } from './questions';
+import { BANK, SECTION_CONFIG, SECTION_ORDER } from './questions';
 import { isSprCorrect } from './spr';
-import { scoreSection, projectShort, scoreComposite } from './scoring';
+import { projectShort, scoreComposite, scoreFullSection } from './scoring';
 
 export const LETTERS = ['A', 'B', 'C', 'D', 'E'] as const;
 
@@ -9,32 +9,43 @@ export const LETTERS = ['A', 'B', 'C', 'D', 'E'] as const;
 // answers are the entered string (e.g. "3.14" or "1/2"); null = unanswered.
 export type ResponseValue = number | string | null;
 
+// Sub-project #11: a section is now composed of one or more modules.
+// Short tests have a single module per section (length 1). Full tests
+// build Module 1 up-front; Module 2 is appended via `appendModule2`
+// after the Module 1 submit decides the routing path.
+export interface TestModule {
+  index: number;            // 0 = Module 1, 1 = Module 2
+  questions: Question[];    // already shuffled; choice order also shuffled per-q
+  timeLimit: number;        // seconds — moduleSize × secsPerQ
+}
+
 export interface TestSection {
   key: SectionKey;
   name: string;
-  questions: Question[];   // already shuffled; choice order already shuffled per-question
-  timeLimit: number;       // seconds
+  modules: TestModule[];                       // length 1 (short) or 2 (full)
+  module2Path?: 'easier' | 'harder';           // set when Module 2 is appended
 }
 
 export type TestLength = 'short' | 'full';
 
 export interface Test {
   name: string;
-  length: TestLength;        // needed by computeResults for short-projection branching
+  length: TestLength;                          // drives the scoring branch
   sections: TestSection[];
 }
 
 export interface Results {
   perSection: {
     name: string;
-    sectionKey: SectionKey;  // routes scoreSection + propagates to the payload
+    sectionKey: SectionKey;                    // routes scale_section + propagates to payload
     correct: number;
     total: number;
-    scaled: number;          // 200..800 per section
-    projectedRaw?: number;   // set only when the test was 'short'
+    scaled: number;                            // 200..800 per section
+    projectedRaw?: number;                     // set only when the test was 'short'
+    module2Path?: 'easier' | 'harder';         // set only when the test was 'full'
   }[];
   pct: number;
-  scaled: number;            // composite, 400..1600
+  scaled: number;                              // composite, 400..1600
 }
 
 export function shuffle<T>(arr: T[]): T[] {
@@ -59,70 +70,127 @@ export function shuffleChoices(q: Question): Question {
   };
 }
 
+// Convenience: flatten a section's questions across all modules.
+// Useful for cross-module navigation and bulk review rendering.
+export function sectionQuestions(s: TestSection): Question[] {
+  return s.modules.flatMap((m) => m.questions);
+}
+
+// buildTest builds Module 1 only. Module 2 is appended via `appendModule2`
+// once routing is decided after the Module 1 submit.
+//
+// `module1Bank` is optional — when omitted, builds from the in-code BANK
+// offline fallback (the catch branch of useTestSession.start()).
 export function buildTest(
   name: string,
   testLength: TestLength,
-  bank: Question[] = DEFAULT_BANK,
+  module1Bank?: Record<SectionKey, Question[]>,
 ): Test {
+  const bank = module1Bank ?? buildFallbackBank();
   const sections: TestSection[] = SECTION_ORDER.map((secKey) => {
     const cfg = SECTION_CONFIG[secKey];
-    const pool = shuffle(bank.filter((q) => q.section === secKey));
-    const count = testLength === 'short' ? Math.min(cfg.shortCount, pool.length) : pool.length;
-    const questions = pool.slice(0, count).map(shuffleChoices);
+    const moduleSize = testLength === 'short'
+      ? Math.min(cfg.shortCount, bank[secKey].length)
+      : Math.min(cfg.moduleSize, bank[secKey].length);
+    const questions = bank[secKey].slice(0, moduleSize).map(shuffleChoices);
     return {
       key: secKey,
       name: cfg.name,
-      questions,
-      timeLimit: count * cfg.secsPerQ,
+      modules: [{ index: 0, questions, timeLimit: moduleSize * cfg.secsPerQ }],
     };
   });
   return { name: name || 'Student', length: testLength, sections };
 }
 
+// Append Module 2 to a section after the Module 1 routing decision.
+// Returns a new Test (sections re-mapped immutably) so React state
+// updates can rely on a fresh top-level reference.
+export function appendModule2(
+  test: Test,
+  secIdx: number,
+  drawn: Question[],
+  path: 'easier' | 'harder',
+): Test {
+  const sec = test.sections[secIdx];
+  const cfg = SECTION_CONFIG[sec.key];
+  const moduleSize = Math.min(cfg.moduleSize, drawn.length);
+  const questions = drawn.slice(0, moduleSize).map(shuffleChoices);
+  const m2: TestModule = { index: 1, questions, timeLimit: moduleSize * cfg.secsPerQ };
+  const newSections = test.sections.map((s, i) =>
+    i === secIdx ? { ...s, modules: [s.modules[0], m2], module2Path: path } : s,
+  );
+  return { ...test, sections: newSections };
+}
+
+// Offline-fallback bank: shuffle BANK per section. Difficulty isn't
+// represented in BANK; the resulting Module 1 is whatever falls out of
+// shuffle. Acceptable for the fallback path — the real composition rule
+// (9 easy + 9 medium + 9 hard, etc.) only applies when the pool draw
+// succeeded.
+function buildFallbackBank(): Record<SectionKey, Question[]> {
+  return {
+    rw:   shuffle(BANK.filter((q) => q.section === 'rw')),
+    math: shuffle(BANK.filter((q) => q.section === 'math')),
+  };
+}
+
+// computeResults: scores a finished test. Responses are 3-D —
+// [section][module][question] — to match the per-module FSM in the hook.
+// Throws if a full-test section is missing `module2Path`: that would mean
+// the FSM let Module 2 finish without recording the routing decision,
+// which is a programmer error (and would silently mis-score otherwise).
 export function computeResults(
   test: Test,
-  responses: ResponseValue[][],
+  responses: ResponseValue[][][],
 ): Results {
   let totalCorrect = 0;
   let totalQ = 0;
   const perSection = test.sections.map((sec, si) => {
     let correct = 0;
-    sec.questions.forEach((q, qi) => {
-      const v = responses[si][qi];
-      if (q.response_format === 'spr') {
-        if (
-          typeof v === 'string' &&
-          q.correct_answer &&
-          isSprCorrect(v, q.correct_answer, q.answer_tolerance ?? null)
-        ) {
+    let total = 0;
+    sec.modules.forEach((mod, mi) => {
+      mod.questions.forEach((q, qi) => {
+        const v = responses[si]?.[mi]?.[qi];
+        if (q.response_format === 'spr') {
+          if (
+            typeof v === 'string' &&
+            q.correct_answer &&
+            isSprCorrect(v, q.correct_answer, q.answer_tolerance ?? null)
+          ) {
+            correct++;
+          }
+        } else if (typeof v === 'number' && v === q.answerIndex) {
           correct++;
         }
-      } else if (v === q.answerIndex) {
-        correct++;
-      }
+      });
+      total += mod.questions.length;
     });
     totalCorrect += correct;
-    totalQ += sec.questions.length;
-    // For 'short' tests, projectShort projects raw% onto fullCount; for
-    // 'full', it's a direct lookup. Both branch through scoring.ts so the
-    // SQL mirror (sat.scale_section) sees the same shape.
+    totalQ += total;
+
     if (test.length === 'short') {
-      const p = projectShort(sec.key, correct, sec.questions.length);
+      const p = projectShort(sec.key, correct, total);
       return {
         name: sec.name,
         sectionKey: sec.key,
         correct,
-        total: sec.questions.length,
+        total,
         scaled: p.scaled,
         projectedRaw: p.projectedRaw,
       };
+    }
+    if (!sec.module2Path) {
+      throw new Error(
+        `computeResults: full-test section ${sec.key} missing module2Path`,
+      );
     }
     return {
       name: sec.name,
       sectionKey: sec.key,
       correct,
-      total: sec.questions.length,
-      scaled: scoreSection(sec.key, correct),
+      total,
+      scaled: scoreFullSection(sec.key, correct, sec.module2Path),
+      module2Path: sec.module2Path,
     };
   });
   const pct = totalQ ? totalCorrect / totalQ : 0;

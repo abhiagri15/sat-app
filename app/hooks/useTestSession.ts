@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
+  appendModule2,
   buildTest,
   computeResults,
   type Results,
@@ -9,9 +10,12 @@ import {
   type Test,
   type TestLength,
 } from '@/app/lib/test';
-import { drawTestQuestions } from '@/app/lib/pool';
+import { drawShortTest, drawFullTestModule1, drawModule2 } from '@/app/lib/pool';
+import { SECTION_CONFIG } from '@/app/lib/questions';
+import { isSprCorrect } from '@/app/lib/spr';
 import { toAttemptPayload } from '@/app/lib/persistence/payload';
 import { saveAttempt } from '@/app/lib/persistence/actions';
+import { getModule2ThresholdPct } from '@/app/lib/config-actions';
 
 export type Screen = 'start' | 'test' | 'results';
 
@@ -26,11 +30,14 @@ export interface TestSession {
   setTestLength: (l: TestLength) => void;
   test: Test | null;
   secIdx: number;
+  modIdx: number;
   qIdx: number;
-  // Per-question answer matrix. mcq questions hold the chosen choice index
-  // (number); SPR questions hold the entered string. null = unanswered.
-  responses: ResponseValue[][];
-  remaining: number[];
+  // Per-question answer matrix, 3-D: [section][module][question].
+  // mcq cells hold the chosen choice index (number); SPR cells hold the
+  // entered string. null = unanswered.
+  responses: ResponseValue[][][];
+  // Per-module remaining seconds: [section][module].
+  remaining: number[][];
   showReview: boolean;
   toggleReview: () => void;
   loading: boolean;
@@ -42,7 +49,10 @@ export interface TestSession {
   // (the chosen choice index), string for SPR (the typed entry).
   setAnswer: (value: number | string) => void;
   goToQuestion: (qi: number) => void;
-  submitSection: () => void;
+  // Replaces submitSection. For short tests this behaves like the old
+  // section submit; for full tests it routes Module 1 → Module 2 (with
+  // a lazy pool draw) on first call, then finalises the section.
+  submitModule: () => void;
   newTest: () => void;
   results: Results | null;
 }
@@ -54,9 +64,10 @@ export function useTestSession(initialName = ''): TestSession {
 
   const [test, setTest] = useState<Test | null>(null);
   const [secIdx, setSecIdx] = useState(0);
+  const [modIdx, setModIdx] = useState(0);
   const [qIdx, setQIdx] = useState(0);
-  const [responses, setResponses] = useState<ResponseValue[][]>([]);
-  const [remaining, setRemaining] = useState<number[]>([]);
+  const [responses, setResponses] = useState<ResponseValue[][][]>([]);
+  const [remaining, setRemaining] = useState<number[][]>([]);
   const [showReview, setShowReview] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
@@ -80,15 +91,17 @@ export function useTestSession(initialName = ''): TestSession {
   // Cleanup on unmount.
   useEffect(() => () => stopTimer(), [stopTimer]);
 
-  // Drive the countdown whenever we're on the test screen / change section.
+  // Drive the countdown whenever we're on the test screen / change section / module.
   useEffect(() => {
     if (screen !== 'test') return;
     stopTimer();
     tickRef.current = setInterval(() => {
       setRemaining((prev) => {
-        const next = prev.slice();
-        if (next[secIdx] > 0) next[secIdx] -= 1;
-        if (next[secIdx] <= 0) {
+        const next = prev.map((arr) => arr.slice());
+        const row = next[secIdx];
+        if (!row) return prev;
+        if ((row[modIdx] ?? 0) > 0) row[modIdx] -= 1;
+        if ((row[modIdx] ?? 0) <= 0) {
           // Defer the advance to avoid setState mid-render of the parent tree.
           setTimeout(() => handleTimeUp(), 0);
         }
@@ -97,11 +110,9 @@ export function useTestSession(initialName = ''): TestSession {
     }, 1000);
     return stopTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen, secIdx]);
+  }, [screen, secIdx, modIdx]);
 
   // Persist the attempt exactly once, when the results screen first appears.
-  // Runs as an effect (not inside finish()) so it reads committed state, and
-  // reuses the render-derived `results` rather than recomputing the score.
   useEffect(() => {
     if (screen !== 'results' || !test || !results || savedRef.current) return;
     savedRef.current = true;
@@ -121,17 +132,14 @@ export function useTestSession(initialName = ''): TestSession {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen]);
 
+  // Auto-finalise the current module on time-up. For a full test the
+  // submit flow handles the Module 1 → Module 2 transition; we reuse it
+  // here so timer expiry follows the same path as a manual submit.
   const handleTimeUp = () => {
     stopTimer();
     if (!test) return;
-    if (secIdx < test.sections.length - 1) {
-      window.alert('Time is up for this section. Moving to the next section.');
-      setSecIdx((s) => s + 1);
-      setQIdx(0);
-    } else {
-      window.alert('Time is up. Submitting your test.');
-      finish();
-    }
+    window.alert('Time is up for this module.');
+    void submitModule(true);
   };
 
   const finish = () => {
@@ -148,8 +156,9 @@ export function useTestSession(initialName = ''): TestSession {
     setLoading(true);
     let t: Test;
     try {
-      const drawn = await drawTestQuestions(testLength);
-      if (drawn.length === 0) throw new Error('empty pool draw');
+      const drawn = testLength === 'short'
+        ? await drawShortTest()
+        : await drawFullTestModule1();
       t = buildTest(trimmed, testLength, drawn);
     } catch (e) {
       console.error('[useTestSession] pool draw failed; using BANK fallback', e);
@@ -157,9 +166,12 @@ export function useTestSession(initialName = ''): TestSession {
     }
     setLoading(false);
     setTest(t);
-    setResponses(t.sections.map((s) => new Array(s.questions.length).fill(null)));
-    setRemaining(t.sections.map((s) => s.timeLimit));
+    setResponses(
+      t.sections.map((s) => s.modules.map((m) => new Array(m.questions.length).fill(null))),
+    );
+    setRemaining(t.sections.map((s) => s.modules.map((m) => m.timeLimit)));
     setSecIdx(0);
+    setModIdx(0);
     setQIdx(0);
     setShowReview(false);
     setScreen('test');
@@ -167,27 +179,114 @@ export function useTestSession(initialName = ''): TestSession {
 
   const setAnswer = (value: number | string) => {
     setResponses((prev) => {
-      const next = prev.map((arr) => arr.slice());
-      next[secIdx][qIdx] = value;
+      const next = prev.map((sec) => sec.map((mod) => mod.slice()));
+      if (!next[secIdx] || !next[secIdx][modIdx]) return prev;
+      next[secIdx][modIdx][qIdx] = value;
       return next;
     });
   };
 
   const goToQuestion = (qi: number) => setQIdx(qi);
 
-  const submitSection = () => {
+  // submitModule replaces the old submitSection. `auto` skips the
+  // confirm prompt — used for the time-up auto-advance.
+  const submitModule = async (auto = false) => {
     if (!test) return;
-    const unanswered = responses[secIdx].filter((r) => r === null).length;
-    const last = secIdx === test.sections.length - 1;
-    let msg = unanswered > 0 ? `You have ${unanswered} unanswered question(s) in this section. ` : '';
-    msg += last ? 'Submit the whole test now?' : 'Move on to the next section now?';
-    if (!window.confirm(msg)) return;
-    if (last) {
-      finish();
-    } else {
+
+    // Short tests: one module per section. Behave like the old submitSection.
+    if (test.length === 'short') {
+      const unanswered = responses[secIdx]?.[0]?.filter((r) => r === null).length ?? 0;
+      const last = secIdx === test.sections.length - 1;
+      if (!auto) {
+        let msg = unanswered > 0
+          ? `You have ${unanswered} unanswered question(s) in this section. `
+          : '';
+        msg += last ? 'Submit the whole test now?' : 'Move on to the next section now?';
+        if (!window.confirm(msg)) return;
+      }
+      if (last) {
+        finish();
+        return;
+      }
       setSecIdx((s) => s + 1);
       setQIdx(0);
+      return;
     }
+
+    // Full test branch.
+    const sec = test.sections[secIdx];
+    if (modIdx === 0) {
+      const unanswered = responses[secIdx]?.[0]?.filter((r) => r === null).length ?? 0;
+      if (!auto) {
+        const msg =
+          (unanswered > 0
+            ? `You have ${unanswered} unanswered question(s) in this module. `
+            : '') + 'Submit Module 1 and continue to Module 2?';
+        if (!window.confirm(msg)) return;
+      }
+      // Compute Module 1 correct.
+      let correct = 0;
+      sec.modules[0].questions.forEach((q, qi) => {
+        const v = responses[secIdx]?.[0]?.[qi];
+        if (q.response_format === 'spr') {
+          if (
+            typeof v === 'string' &&
+            q.correct_answer &&
+            isSprCorrect(v, q.correct_answer, q.answer_tolerance ?? null)
+          ) {
+            correct++;
+          }
+        } else if (typeof v === 'number' && v === q.answerIndex) {
+          correct++;
+        }
+      });
+      const threshold = await getModule2ThresholdPct();
+      const moduleSize = SECTION_CONFIG[sec.key].moduleSize;
+      const cutoff = Math.ceil((moduleSize * threshold) / 100);
+      const path: 'easier' | 'harder' = correct >= cutoff ? 'harder' : 'easier';
+      setLoading(true);
+      try {
+        const drawn = await drawModule2(sec.key, path);
+        const drawnLen = Math.min(SECTION_CONFIG[sec.key].moduleSize, drawn.length);
+        setTest((t) => (t ? appendModule2(t, secIdx, drawn, path) : t));
+        setResponses((r) => {
+          const next = r.map((arr) => arr.map((a) => a.slice()));
+          next[secIdx][1] = new Array(drawnLen).fill(null);
+          return next;
+        });
+        setRemaining((rem) => {
+          const next = rem.map((arr) => arr.slice());
+          next[secIdx][1] = drawnLen * SECTION_CONFIG[sec.key].secsPerQ;
+          return next;
+        });
+        setModIdx(1);
+        setQIdx(0);
+      } catch (e) {
+        console.error('[useTestSession] drawModule2 failed:', e);
+        window.alert('Failed to load Module 2. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // modIdx === 1: Module 2 done.
+    const unanswered = responses[secIdx]?.[1]?.filter((r) => r === null).length ?? 0;
+    const last = secIdx === test.sections.length - 1;
+    if (!auto) {
+      let msg = unanswered > 0
+        ? `You have ${unanswered} unanswered question(s) in this module. `
+        : '';
+      msg += last ? 'Submit the whole test now?' : 'Move on to the next section now?';
+      if (!window.confirm(msg)) return;
+    }
+    if (last) {
+      finish();
+      return;
+    }
+    setSecIdx((s) => s + 1);
+    setModIdx(0);
+    setQIdx(0);
   };
 
   const newTest = () => {
@@ -203,8 +302,8 @@ export function useTestSession(initialName = ''): TestSession {
 
   return {
     screen, name, setName, testLength, setTestLength,
-    test, secIdx, qIdx, responses, remaining,
+    test, secIdx, modIdx, qIdx, responses, remaining,
     showReview, toggleReview, loading, saveStatus, sessionCompletions,
-    start, setAnswer, goToQuestion, submitSection, newTest, results,
+    start, setAnswer, goToQuestion, submitModule, newTest, results,
   };
 }

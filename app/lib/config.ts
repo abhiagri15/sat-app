@@ -1,6 +1,7 @@
 import { createClient } from '@/app/lib/supabase/server';
 
 const DEFAULT_DAILY_ATTEMPT_LIMIT = 5;
+const DEFAULT_MODULE2_THRESHOLD_PCT = 60;
 
 // The app-wide daily test-attempt limit per user (from sat.app_config).
 // Falls back to the default if the config row is unreadable.
@@ -48,4 +49,22 @@ export async function getAttemptUsage(): Promise<AttemptUsage> {
     remaining: Math.max(0, limit - used),
     limitReached: used >= limit,
   };
+}
+
+// Sub-project #11: the per-section Module 2 routing threshold (% of
+// Module 1 correct required to take the harder Module 2). Reads from
+// the single-row sat.app_config; falls back to the default if unreadable.
+export async function getModule2ThresholdPct(): Promise<number> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .schema('sat')
+    .from('app_config')
+    .select('module2_threshold_pct')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error || !data) {
+    console.error('[getModule2ThresholdPct] failed:', error);
+    return DEFAULT_MODULE2_THRESHOLD_PCT;
+  }
+  return (data as { module2_threshold_pct: number }).module2_threshold_pct;
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import type { Test, Results, ResponseValue } from '@/app/lib/test';
+import { sectionQuestions } from '@/app/lib/test';
 import type { SaveStatus } from '@/app/hooks/useTestSession';
 import { ReviewItem } from './ReviewItem';
 import { Button } from '@/app/components/ui/button';
@@ -8,7 +9,8 @@ import { Card, CardContent } from '@/app/components/ui/card';
 
 interface ResultsScreenProps {
   test: Test;
-  responses: ResponseValue[][];
+  // 3-D responses matrix: [section][module][question].
+  responses: ResponseValue[][][];
   results: Results;
   saveStatus: SaveStatus;
   showReview: boolean;
@@ -55,6 +57,11 @@ export function ResultsScreen({
                       (projected from {s.correct}/{s.total})
                     </span>
                   )}
+                  {s.module2Path !== undefined && (
+                    <span className="ml-2 text-slate-400">
+                      (Module 2: {s.module2Path})
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
@@ -77,24 +84,31 @@ export function ResultsScreen({
             </p>
           )}
           <p className="text-sm text-slate-500 mt-3">
-            Scored using a College Board–published Digital SAT scoring curve. Adaptive module
-            scoring is not yet applied.
+            Scored using a College Board–published Digital SAT scoring curve.
           </p>
         </CardContent>
       </Card>
 
       {showReview && (
         <div className="mt-[18px]">
-          {test.sections.map((sec, si) => (
-            <div key={si}>
-              <h2 className="text-base font-semibold my-[22px] mb-3">
-                {sec.name} — review
-              </h2>
-              {sec.questions.map((q, qi) => (
-                <ReviewItem key={qi} question={q} response={responses[si][qi]} />
-              ))}
-            </div>
-          ))}
+          {test.sections.map((sec, si) => {
+            const flat = sectionQuestions(sec);
+            // Build a parallel flat response array so each question's
+            // ReviewItem gets the matching [section][module][question] value.
+            const flatResponses: ResponseValue[] = sec.modules.flatMap(
+              (m, mi) => m.questions.map((_, qi) => responses[si]?.[mi]?.[qi] ?? null),
+            );
+            return (
+              <div key={si}>
+                <h2 className="text-base font-semibold my-[22px] mb-3">
+                  {sec.name} — review
+                </h2>
+                {flat.map((q, idx) => (
+                  <ReviewItem key={idx} question={q} response={flatResponses[idx]} />
+                ))}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

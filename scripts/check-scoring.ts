@@ -43,10 +43,10 @@ function assert(cond: unknown, label: string): void {
 
 assert(CURVE_VERSION === 'dsat-pt1-2024-09+adaptive', 'CURVE_VERSION locked');
 
-assert(RW_CURVE.length - 1 === SECTION_CONFIG.rw.fullCount,
-  `R&W curve length (${RW_CURVE.length - 1}) === fullCount (${SECTION_CONFIG.rw.fullCount})`);
-assert(MATH_CURVE.length - 1 === SECTION_CONFIG.math.fullCount,
-  `Math curve length (${MATH_CURVE.length - 1}) === fullCount (${SECTION_CONFIG.math.fullCount})`);
+assert(RW_CURVE.length - 1 === SECTION_CONFIG.rw.moduleSize,
+  `R&W curve length (${RW_CURVE.length - 1}) === moduleSize (${SECTION_CONFIG.rw.moduleSize})`);
+assert(MATH_CURVE.length - 1 === SECTION_CONFIG.math.moduleSize,
+  `Math curve length (${MATH_CURVE.length - 1}) === moduleSize (${SECTION_CONFIG.math.moduleSize})`);
 
 assert(RW_CURVE[0] === 200,                            'RW_CURVE[0] === 200');
 assert(RW_CURVE[RW_CURVE.length - 1] === 800,          'RW_CURVE last === 800');
@@ -114,8 +114,8 @@ assert(scoreFullSection('rw', 17, 'harder') > scoreFullSection('rw', 17, 'easier
 
 // Mid-band shape — see plan's "Curve numbers" section on the
 // [480, 600] / [960, 1200] widening relative to the spec's estimate.
-const midRw   = Math.round(SECTION_CONFIG.rw.fullCount   / 2); // 14
-const midMath = Math.round(SECTION_CONFIG.math.fullCount / 2); // 11
+const midRw   = Math.round(SECTION_CONFIG.rw.moduleSize   / 2); // 14
+const midMath = Math.round(SECTION_CONFIG.math.moduleSize / 2); // 11
 const rwMid   = scoreSection('rw',   midRw);
 const mathMid = scoreSection('math', midMath);
 assert(rwMid   >= 480 && rwMid   <= 600, `R&W mid-band at raw ${midRw} in [480,600], got ${rwMid}`);
