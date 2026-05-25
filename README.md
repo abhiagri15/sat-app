@@ -150,6 +150,26 @@ the user's answer marked correct, incorrect, or skipped, plus the worked explana
 review reads the question exactly as it was presented during that test (see the gotcha in
 `CLAUDE.md` about why responses snapshot the shuffled choices).
 
+## Scoring
+
+Each section reports a **200–800 scaled score**; the composite is the
+sum (400–1600). The numbers come from a real College Board–published
+Digital SAT practice-test scoring guide, re-indexed onto this app's
+single-module section length (R&W: 27 questions, Math: 22 questions —
+real Digital SAT delivers 54 / 44 across two modules; the second module
+ships with sub-project #11).
+
+Short tests project their raw % onto the full-test count and look up
+that — so a short attempt and a full attempt show on the same score
+axis. The `(projected)` muted-grey label on the score block makes the
+projection explicit.
+
+`scaled_score` is computed server-side by `sat.save_attempt` from the
+per-section `correct/total/test_length` — the client cannot tamper
+with it. The published-curve version is tracked by a `CURVE_VERSION`
+sentinel in [app/lib/scoring.ts](app/lib/scoring.ts); switching curves
+is a deliberate code change, not a silent rescore.
+
 ## Analytics
 
 `/analytics` turns the user's saved attempts into a progress view. It shows a score
@@ -254,6 +274,8 @@ to push the production deployment.
 - app/components/ReferencePanel.tsx  floating Math reference sheet overlay (Math-only)
 - app/lib/spr.ts                     pure parser + comparator for SPR answers (mirrors sat.spr_is_correct)
 - scripts/check-spr.ts               scripted check for the SPR parser + comparator
+- app/lib/scoring.ts                 scaled-score curve (RW_CURVE/MATH_CURVE) + helpers (mirrors sat.scale_section)
+- scripts/check-scoring.ts           scripted check for the scoring curve + JS↔SQL parity
 - app/components/admin/QuestionRow.tsx        one pool row with an enable/disable toggle
 - app/components/admin/FlagRow.tsx            one flag row — reason, question link, mark-resolved
 - app/components/FlagQuestion.tsx    in-review widget to report a problem with a question
@@ -305,6 +327,7 @@ to push the production deployment.
 - supabase/migrations/20260525010000_sat_questions_format.sql   adds response_format / correct_answer / answer_tolerance to sat.questions
 - supabase/migrations/20260525020000_sat_attempt_responses_format.sql  adds response_format / entered_value / correct_answer / answer_tolerance to sat.attempt_responses
 - supabase/migrations/20260525030000_sat_spr_helpers.sql        sat.spr_to_numeric + sat.spr_is_correct helpers; save_attempt joins to sat.questions for SPR canonical
+- supabase/migrations/20260525040000_sat_real_scoring.sql       sat.scale_section + save_attempt recreation + backfill UPDATE (real per-section curve)
 
 ## Adding questions
 Open `app/lib/questions.ts` and add objects to the `BANK` array. Each question looks like:
