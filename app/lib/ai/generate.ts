@@ -3,6 +3,7 @@ import { getProvider } from './provider';
 import { generatedQuestionSchema } from './schema';
 import { dedupHash } from './dedup';
 import { SKILLS } from '@/app/lib/questions';
+import { isSprCorrect } from '@/app/lib/spr';
 import { createAdminClient } from '@/app/lib/supabase/admin';
 
 // Keep at least this many UNSEEN questions in the pool for the worst-off
@@ -32,6 +33,10 @@ const SKILL_FLOOR = 3;
 // alongside a larger `maxDuration` on the generation route.
 const MAX_SKILLS_PER_RUN = 1;
 const PER_SKILL_BATCH = 3;
+// Fraction of Math generation runs that produce student-produced-response
+// (grid-in) questions rather than multiple choice. Roughly matches the
+// ~25% SPR share on the real Digital SAT Math section.
+const SPR_PROBABILITY = 0.25;
 
 export interface GenerationSummary {
   // The worst-off active student's unseen count at the start of the run
@@ -122,12 +127,14 @@ export async function runGeneration(): Promise<GenerationSummary> {
     .sort((a, b) => a.have - b.have)
     .slice(0, MAX_SKILLS_PER_RUN);
 
-  // 6. generate, gate, insert
+  // 6. generate, gate, insert. SPR (math-only) is requested with a per-target
+  //    coin-flip at SPR_PROBABILITY; mcq otherwise. R&W always mcq.
   const provider = getProvider();
   for (const t of targets) {
+    const useSpr = t.section === 'math' && Math.random() < SPR_PROBABILITY;
     let candidates;
     try {
-      candidates = await provider.generateQuestions(t.section, t.skill, PER_SKILL_BATCH);
+      candidates = await provider.generateQuestions(t.section, t.skill, PER_SKILL_BATCH, useSpr);
     } catch (e) {
       console.error('[generate] provider error', t.section, t.skill, e);
       continue;
@@ -144,23 +151,96 @@ export async function runGeneration(): Promise<GenerationSummary> {
         continue;
       }
 
-      let solved: number;
-      try { solved = await provider.solve(q); }
-      catch (e) { console.error('[generate] solve error', e); summary.rejectedSelfVerify++; continue; }
-      if (solved !== q.answerIndex) { summary.rejectedSelfVerify++; continue; }
+      // Self-verify branches on the discriminator. For mcq the model picks
+      // an index and we compare to answerIndex; for spr the model types a
+      // numeric answer and we compare with isSprCorrect.
+      let verified = false;
+      try {
+        if (q.responseFormat === 'mcq') {
+          const r = await provider.solve({
+            responseFormat: 'mcq',
+            section: q.section,
+            skill: q.skill,
+            passage: q.passage,
+            prompt: q.prompt,
+            choices: q.choices,
+          });
+          verified = r.responseFormat === 'mcq' && r.answerIndex === q.answerIndex;
+        } else {
+          const r = await provider.solve({
+            responseFormat: 'spr',
+            section: q.section,
+            skill: q.skill,
+            prompt: q.prompt,
+          });
+          verified =
+            r.responseFormat === 'spr' &&
+            isSprCorrect(r.answer, q.correctAnswer, q.answerTolerance ?? null);
+        }
+      } catch (e) {
+        console.error('[generate] solve error', e);
+        summary.rejectedSelfVerify++;
+        continue;
+      }
+      if (!verified) { summary.rejectedSelfVerify++; continue; }
 
-      const { error } = await admin.schema('sat').from('questions').insert({
-        id: `ai-${randomUUID()}`,
-        section: q.section,
-        skill: q.skill,
-        passage: q.passage ?? null,
-        prompt: q.prompt,
-        choices: q.choices,
-        answer_index: q.answerIndex,
-        explanation: q.explanation,
-        source: 'ai',
-        dedup_hash: dedupHash(q.prompt, q.choices, q.passage),
-      });
+      // Build the insert row. mcq uses choices + answer_index; spr uses
+      // correct_answer + answer_tolerance with placeholder choices/index
+      // (the runner ignores them when response_format = 'spr'). Explicit
+      // wider field types so the conditional doesn't get narrowed to one
+      // branch's literal types by Supabase's insert type inference.
+      const row: {
+        id: string;
+        section: 'rw' | 'math';
+        skill: string;
+        passage: string | null;
+        prompt: string;
+        choices: string[];
+        answer_index: number;
+        explanation: string;
+        source: string;
+        response_format: 'mcq' | 'spr';
+        correct_answer: string | null;
+        answer_tolerance: number | null;
+        dedup_hash: string;
+      } = q.responseFormat === 'mcq'
+        ? {
+            id: `ai-${randomUUID()}`,
+            section: q.section,
+            skill: q.skill,
+            passage: q.passage ?? null,
+            prompt: q.prompt,
+            choices: q.choices,
+            answer_index: q.answerIndex,
+            explanation: q.explanation,
+            source: 'ai',
+            response_format: 'mcq',
+            correct_answer: null,
+            answer_tolerance: null,
+            dedup_hash: dedupHash(q.prompt, q.choices, q.passage),
+          }
+        : {
+            id: `ai-${randomUUID()}`,
+            section: q.section,
+            skill: q.skill,
+            passage: null,
+            prompt: q.prompt,
+            choices: [],
+            answer_index: 0,
+            explanation: q.explanation,
+            source: 'ai',
+            response_format: 'spr',
+            correct_answer: q.correctAnswer,
+            answer_tolerance: q.answerTolerance ?? null,
+            // Dedup hash for SPR is over (prompt, correctAnswer) — choices
+            // are empty placeholders so they would collapse all spr rows
+            // to the same hash if used. Pass [correctAnswer] as the "choices"
+            // input so dedupHash's normalisation still distinguishes
+            // semantically different questions.
+            dedup_hash: dedupHash(q.prompt, [q.correctAnswer]),
+          };
+
+      const { error } = await admin.schema('sat').from('questions').insert(row);
       if (error) {
         if (error.code === '23505') summary.rejectedDuplicate++;
         else console.error('[generate] insert error', error);

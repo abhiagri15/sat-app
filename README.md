@@ -5,6 +5,11 @@ Sign in, take timed Reading & Writing and Math sections, submit, and get an inst
 score with a worked explanation for every question. "Start a New Test" reshuffles fresh,
 randomized questions and answer order.
 
+The Math section mixes multiple-choice and **student-produced-response (SPR / grid-in)**
+questions — type in a numeric answer (integer, decimal, or simple fraction) just like the
+real Digital SAT. A Desmos scientific calculator and a Math reference sheet are available
+during Math sections from the test toolbar.
+
 ## Authentication
 
 The app requires sign-in. Every page is gated behind authentication — unauthenticated
@@ -188,6 +193,27 @@ changes it at `/admin/settings`. The Start screen shows how many tests remain an
 blocks starting a new one once the limit is hit; the `sat.save_attempt` RPC
 enforces the same limit as a server-side backstop.
 
+## Question-format parity
+
+Math questions come in two shapes, matching the real Digital SAT:
+
+- **Multiple-choice (mcq)** — pick one of four answers (~75% of Math, all of R&W).
+- **Student-produced response (spr / grid-in)** — type a numeric answer (~25% of Math).
+  Accepts integer (`7`), decimal (`3.14`), or simple fraction (`3/4`). Mixed numbers
+  (`1 1/2`) are rejected — write `1.5` or `3/2` instead.
+
+During Math sections the test toolbar exposes two extras:
+
+- **Calculator** — an embedded Desmos scientific calculator (a lighter substitute for
+  the real Digital SAT's Desmos graphing calculator).
+- **Reference** — the standard SAT formula sheet (areas, special triangles, volumes,
+  angles).
+
+The generator emits SPR for ~25% of Math runs via a per-target coin flip; the share
+converges over time without a shared counter. The SPR canonical answer lives on
+`sat.questions.correct_answer` and is **never trusted from the client** — `save_attempt`
+re-joins to `sat.questions` and computes correctness server-side via `sat.spr_is_correct`.
+
 ## Run it locally
 
     pnpm install
@@ -223,6 +249,11 @@ to push the production deployment.
 - app/(app)/admin/page.tsx           question-pool page — counts, section/status filters, rows
 - app/(app)/admin/questions/[id]/page.tsx  full question detail + enable/disable toggle
 - app/(app)/admin/flags/page.tsx     question-flags review page — status filter, flag list
+- app/components/SprInput.tsx        numeric grid-in input for SPR questions
+- app/components/CalculatorPanel.tsx floating Desmos scientific calculator overlay (Math-only)
+- app/components/ReferencePanel.tsx  floating Math reference sheet overlay (Math-only)
+- app/lib/spr.ts                     pure parser + comparator for SPR answers (mirrors sat.spr_is_correct)
+- scripts/check-spr.ts               scripted check for the SPR parser + comparator
 - app/components/admin/QuestionRow.tsx        one pool row with an enable/disable toggle
 - app/components/admin/FlagRow.tsx            one flag row — reason, question link, mark-resolved
 - app/components/FlagQuestion.tsx    in-review widget to report a problem with a question
@@ -271,6 +302,9 @@ to push the production deployment.
 - supabase/migrations/20260521050000_sat_test_attempts.sql  sat.test_attempts + sat.attempt_responses + save_attempt RPC
 - supabase/migrations/20260521060000_sat_user_analytics.sql  sat.user_analytics security-invoker aggregation RPC
 - supabase/migrations/20260521080000_sat_question_flags.sql  sat.question_flags + submit_flag RPC (RLS, no policies)
+- supabase/migrations/20260525010000_sat_questions_format.sql   adds response_format / correct_answer / answer_tolerance to sat.questions
+- supabase/migrations/20260525020000_sat_attempt_responses_format.sql  adds response_format / entered_value / correct_answer / answer_tolerance to sat.attempt_responses
+- supabase/migrations/20260525030000_sat_spr_helpers.sql        sat.spr_to_numeric + sat.spr_is_correct helpers; save_attempt joins to sat.questions for SPR canonical
 
 ## Adding questions
 Open `app/lib/questions.ts` and add objects to the `BANK` array. Each question looks like:

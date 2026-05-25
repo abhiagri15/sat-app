@@ -1,17 +1,32 @@
 import type { GeneratedQuestion } from './schema';
 import { OllamaCloudProvider } from './ollama';
 
-export type SolveInput = Pick<GeneratedQuestion, 'section' | 'skill' | 'passage' | 'prompt' | 'choices'>;
+// The minimum a solve call needs to re-derive the answer for either format.
+// For mcq we need choices; for spr we ignore choices (always empty there).
+export type SolveInput =
+  | Pick<Extract<GeneratedQuestion, { responseFormat: 'mcq' }>,
+      'responseFormat' | 'section' | 'skill' | 'passage' | 'prompt' | 'choices'>
+  | Pick<Extract<GeneratedQuestion, { responseFormat: 'spr' }>,
+      'responseFormat' | 'section' | 'skill' | 'prompt'>;
+
+// Solver result is polymorphic across response formats. For mcq the model
+// returns a 0-based choice index; for spr it returns a typed numeric string
+// to be compared with the canonical answer via isSprCorrect.
+export type SolveResult =
+  | { responseFormat: 'mcq'; answerIndex: number }
+  | { responseFormat: 'spr'; answer: string };
 
 export interface AIProvider {
-  // Generate `count` questions for one (section, skill).
+  // Generate `count` questions for one (section, skill). Caller decides
+  // whether to request mcq or spr via the `useSpr` flag (spr is Math-only).
   generateQuestions(
     section: 'rw' | 'math',
     skill: string,
     count: number,
+    useSpr: boolean,
   ): Promise<GeneratedQuestion[]>;
-  // Re-solve a question; returns the chosen 0-based choice index (self-verify).
-  solve(q: SolveInput): Promise<number>;
+  // Re-solve a question for the self-verify gate. Branches on responseFormat.
+  solve(q: SolveInput): Promise<SolveResult>;
 }
 
 // Provider factory — keyed on SAT_AI_PROVIDER so other providers can be added later.
