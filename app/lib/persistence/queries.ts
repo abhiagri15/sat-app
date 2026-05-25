@@ -7,6 +7,7 @@ export interface SectionBreakdownEntry {
   correct: number;
   total: number;
   scaled: number;
+  module2Path?: 'easier' | 'harder' | null;   // null/omitted for short tests
 }
 
 // A test_attempts row, as listed on /dashboard.
@@ -62,6 +63,8 @@ export interface AttemptResponseRow {
   entered_value: string | null;
   correct_answer: string | null;
   answer_tolerance: number | null;
+  // Sub-project #11: which module (0 = Module 1, 1 = Module 2). Null for short attempts.
+  module_index: number | null;
 }
 
 export interface AttemptDetail {
@@ -70,7 +73,7 @@ export interface AttemptDetail {
 }
 
 const RESPONSE_COLUMNS =
-  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct, response_format, entered_value, correct_answer, answer_tolerance';
+  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct, response_format, entered_value, correct_answer, answer_tolerance, module_index';
 
 // One attempt with all its responses, or null if it does not exist / is not
 // the caller's (RLS) / the id is not a valid uuid (a malformed id makes the

@@ -14,6 +14,7 @@ const attemptResponseSchema = z.object({
   explanation: z.string().min(1),
   chosenIndex: z.number().int().min(0).nullable(),
   isCorrect: z.boolean(),
+  moduleIndex: z.number().int().min(0).max(1).nullable().optional(),  // Sub-project #11: 0|1 for full, null for short
 });
 
 export const attemptPayloadSchema = z.object({
@@ -29,6 +30,8 @@ export const attemptPayloadSchema = z.object({
         sectionKey: z.enum(['rw', 'math']),    // server routes scale_section on this
         correct: z.number().int().min(0),
         total: z.number().int().min(0),
+        // Sub-project #11: routing path on full attempts. null/omitted for short.
+        module2Path: z.enum(['easier', 'harder']).nullable().optional(),
       }),
     )
     .min(1),

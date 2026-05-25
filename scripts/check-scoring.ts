@@ -20,6 +20,13 @@ import {
   projectShort,
   scoreComposite,
 } from '../app/lib/scoring';
+import {
+  RW_FULL_EASIER_CURVE,
+  RW_FULL_HARDER_CURVE,
+  MATH_FULL_EASIER_CURVE,
+  MATH_FULL_HARDER_CURVE,
+  scoreFullSection,
+} from '../app/lib/scoring';
 import { SECTION_CONFIG } from '../app/lib/questions';
 
 let failed = 0;
@@ -34,7 +41,7 @@ function assert(cond: unknown, label: string): void {
 
 // ---------- (1) Sanity ----------
 
-assert(CURVE_VERSION === 'dsat-pt1-2024-09', 'CURVE_VERSION locked');
+assert(CURVE_VERSION === 'dsat-pt1-2024-09+adaptive', 'CURVE_VERSION locked');
 
 assert(RW_CURVE.length - 1 === SECTION_CONFIG.rw.fullCount,
   `R&W curve length (${RW_CURVE.length - 1}) === fullCount (${SECTION_CONFIG.rw.fullCount})`);
@@ -59,6 +66,51 @@ for (let i = 1; i < RW_CURVE.length; i++) {
 for (let i = 1; i < MATH_CURVE.length; i++) {
   assert(MATH_CURVE[i] >= MATH_CURVE[i - 1], `MATH_CURVE non-decreasing at i=${i}`);
 }
+
+// ---------- New curves (sub-project #11) ----------
+
+const FULL_CURVES = [
+  { name: 'RW_FULL_EASIER',   curve: RW_FULL_EASIER_CURVE,   expectedLen: 55, endpoint: [200, 600] as const },
+  { name: 'RW_FULL_HARDER',   curve: RW_FULL_HARDER_CURVE,   expectedLen: 55, endpoint: [430, 800] as const },
+  { name: 'MATH_FULL_EASIER', curve: MATH_FULL_EASIER_CURVE, expectedLen: 45, endpoint: [200, 600] as const },
+  { name: 'MATH_FULL_HARDER', curve: MATH_FULL_HARDER_CURVE, expectedLen: 45, endpoint: [430, 800] as const },
+] as const;
+
+for (const { name, curve, expectedLen, endpoint: [lo, hi] } of FULL_CURVES) {
+  assert(curve.length === expectedLen, `${name}.length === ${expectedLen}`);
+  assert(curve[0] === lo,                       `${name}[0] === ${lo}`);
+  assert(curve[curve.length - 1] === hi,        `${name} last === ${hi}`);
+  for (let i = 0; i < curve.length; i++) {
+    assert(curve[i] >= 200 && curve[i] <= 800, `${name}[${i}] in [200,800]`);
+  }
+  for (let i = 1; i < curve.length; i++) {
+    assert(curve[i] >= curve[i - 1], `${name} non-decreasing at i=${i}`);
+  }
+}
+
+// Path inequality — Harder ≥ Easier at every raw count.
+for (let i = 0; i < RW_FULL_EASIER_CURVE.length; i++) {
+  assert(RW_FULL_HARDER_CURVE[i] >= RW_FULL_EASIER_CURVE[i],
+    `RW_FULL_HARDER[${i}] >= RW_FULL_EASIER[${i}]`);
+}
+for (let i = 0; i < MATH_FULL_EASIER_CURVE.length; i++) {
+  assert(MATH_FULL_HARDER_CURVE[i] >= MATH_FULL_EASIER_CURVE[i],
+    `MATH_FULL_HARDER[${i}] >= MATH_FULL_EASIER[${i}]`);
+}
+
+// scoreFullSection: locked quadrant rows.
+assert(scoreFullSection('rw',   0,  'easier') === 200,    'rw/easier raw 0 → 200');
+assert(scoreFullSection('rw',   54, 'easier') === 600,    'rw/easier raw 54 → 600');
+assert(scoreFullSection('rw',   0,  'harder') === 430,    'rw/harder raw 0 → 430');
+assert(scoreFullSection('rw',   54, 'harder') === 800,    'rw/harder raw 54 → 800');
+assert(scoreFullSection('math', 0,  'easier') === 200,    'math/easier raw 0 → 200');
+assert(scoreFullSection('math', 44, 'easier') === 600,    'math/easier raw 44 → 600');
+assert(scoreFullSection('math', 0,  'harder') === 430,    'math/harder raw 0 → 430');
+assert(scoreFullSection('math', 44, 'harder') === 800,    'math/harder raw 44 → 800');
+
+// Path inequality at the routing-cutoff neighborhood (raw 17 for R&W).
+assert(scoreFullSection('rw', 17, 'harder') > scoreFullSection('rw', 17, 'easier'),
+  'rw raw 17 harder > easier (path inequality)');
 
 // Mid-band shape — see plan's "Curve numbers" section on the
 // [480, 600] / [960, 1200] widening relative to the spec's estimate.

@@ -24,6 +24,7 @@ export interface AttemptResponsePayload {
   correctAnswer: string | null;    // SPR canonical answer (snapshot). null for mcq.
   answerTolerance: number | null;  // SPR float tolerance (snapshot). null for mcq.
   isCorrect: boolean;
+  moduleIndex: number | null;      // Sub-project #11: 0 = Module 1, 1 = Module 2. null for short.
 }
 
 // A whole submitted test, in the shape the save_attempt RPC consumes.
@@ -33,7 +34,13 @@ export interface AttemptPayload {
   totalCorrect: number;
   totalQuestions: number;
   scaledScore: number;
-  sectionBreakdown: { name: string; sectionKey: SectionKey; correct: number; total: number }[];
+  sectionBreakdown: {
+    name: string;
+    sectionKey: SectionKey;
+    correct: number;
+    total: number;
+    module2Path?: 'easier' | 'harder' | null;   // null/omitted for short tests
+  }[];
   responses: AttemptResponsePayload[];
 }
 
@@ -84,6 +91,7 @@ export function toAttemptPayload(
         correctAnswer: q.correct_answer ?? null,
         answerTolerance: q.answer_tolerance ?? null,
         isCorrect,
+        moduleIndex: null,   // Commit 1: default null. Commit 2's mapper wires per-module index.
       });
     }
   }
@@ -106,6 +114,7 @@ export function toAttemptPayload(
       sectionKey: s.sectionKey,
       correct: s.correct,
       total: s.total,
+      module2Path: null,   // Commit 1: default null. Commit 2's mapper wires the path from computeResults.
     })),
     responses: attemptResponses,
   };
