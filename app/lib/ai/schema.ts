@@ -9,6 +9,7 @@ export const generatedQuestionSchema = z.discriminatedUnion('responseFormat', [
     responseFormat: z.literal('mcq'),
     section: z.enum(['rw', 'math']),
     skill: z.string().min(1),
+    difficulty: z.enum(['easy', 'medium', 'hard']),   // Sub-project #11
     passage: z.string().optional(),
     prompt: z.string().min(1),
     choices: z.array(z.string().min(1)).length(4),
@@ -19,6 +20,7 @@ export const generatedQuestionSchema = z.discriminatedUnion('responseFormat', [
     responseFormat: z.literal('spr'),
     section: z.literal('math'),
     skill: z.string().min(1),
+    difficulty: z.enum(['easy', 'medium', 'hard']),   // Sub-project #11
     prompt: z.string().min(1),
     // No passage and no choices for spr — students type a numeric answer.
     correctAnswer: z.string().min(1),

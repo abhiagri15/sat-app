@@ -49,14 +49,15 @@ export class OllamaCloudProvider implements AIProvider {
     skill: string,
     count: number,
     useSpr: boolean,
+    targetDifficulty: 'easy' | 'medium' | 'hard',
   ): Promise<GeneratedQuestion[]> {
     // SPR is Math-only by spec; defensively force back to mcq if the caller
     // requested spr for an R&W skill.
     const effectiveSpr = useSpr && section === 'math';
     if (effectiveSpr) {
-      return this.generateSprBatch(skill, count);
+      return this.generateSprBatch(skill, count, targetDifficulty);
     }
-    return this.generateMcqBatch(section, skill, count);
+    return this.generateMcqBatch(section, skill, count, targetDifficulty);
   }
 
   // Existing multiple-choice generation. Returns an array of `responseFormat:
@@ -66,24 +67,29 @@ export class OllamaCloudProvider implements AIProvider {
     section: 'rw' | 'math',
     skill: string,
     count: number,
+    targetDifficulty: 'easy' | 'medium' | 'hard',
   ): Promise<GeneratedQuestion[]> {
     const sectionName = section === 'rw' ? 'Reading & Writing' : 'Math';
     const example =
       section === 'rw'
-        ? `{"responseFormat":"mcq","section":"rw","skill":"${skill}","passage":"Although critics initially called the design ______, recent reviews praise its bold use of color.",` +
+        ? `{"responseFormat":"mcq","section":"rw","skill":"${skill}","difficulty":"${targetDifficulty}","passage":"Although critics initially called the design ______, recent reviews praise its bold use of color.",` +
           `"prompt":"Which choice best completes the text?","choices":["uninspired","captivating","traditional","minimal"],` +
           `"answerIndex":0,"explanation":"The contrast \\"Although ... recent reviews praise\\" signals the initial reaction was negative; uninspired fits."}`
-        : `{"responseFormat":"mcq","section":"math","skill":"${skill}",` +
+        : `{"responseFormat":"mcq","section":"math","skill":"${skill}","difficulty":"${targetDifficulty}",` +
           `"prompt":"If 3x + 6 = 18, what is the value of x?","choices":["2","4","6","8"],` +
           `"answerIndex":1,"explanation":"Subtract 6 from both sides, then divide by 3: x = 4."}`;
     const content = await chat(
       `Generate ${count} original Digital SAT ${sectionName} multiple-choice practice questions ` +
-        `for the skill "${skill}".\n` +
+        `for the skill "${skill}" at "${targetDifficulty}" difficulty.\n` +
         `Return ONLY a JSON array of objects — no prose, no markdown fences.\n` +
-        `Each object must have exactly these keys: responseFormat, section, skill, ` +
+        `Each object must have exactly these keys: responseFormat, section, skill, difficulty, ` +
         `${section === 'rw' ? 'passage, ' : ''}prompt, choices, answerIndex, explanation.\n` +
         `- "responseFormat" must be "mcq".\n` +
         `- "section" must be "${section}"; "skill" must be "${skill}".\n` +
+        `- "difficulty" must be exactly "${targetDifficulty}". Calibrate:\n` +
+        `    easy   = single computational or recall step; one common skill; low working memory.\n` +
+        `    medium = two steps or a less common skill.\n` +
+        `    hard   = multi-step reasoning, careful reading, or nuanced inference.\n` +
         `- "choices" must be an array of exactly 4 distinct strings.\n` +
         `- "answerIndex" must be an integer 0-3: the 0-based index of the correct choice.\n` +
         `- "explanation" must be PLAIN TEXT (no HTML, no markdown) saying why the answer is correct.\n` +
@@ -102,7 +108,9 @@ export class OllamaCloudProvider implements AIProvider {
     // discriminated-union check would reject it otherwise.
     return parsed.map((q) =>
       q && typeof q === 'object' && !('responseFormat' in q)
-        ? { ...q, responseFormat: 'mcq' }
+        ? { ...q, responseFormat: 'mcq', difficulty: targetDifficulty }
+        : q && typeof q === 'object' && !('difficulty' in q)
+        ? { ...q, difficulty: targetDifficulty }
         : q,
     ) as GeneratedQuestion[];
   }
@@ -113,19 +121,24 @@ export class OllamaCloudProvider implements AIProvider {
   private async generateSprBatch(
     skill: string,
     count: number,
+    targetDifficulty: 'easy' | 'medium' | 'hard',
   ): Promise<GeneratedQuestion[]> {
     const example =
-      `{"responseFormat":"spr","section":"math","skill":"${skill}",` +
+      `{"responseFormat":"spr","section":"math","skill":"${skill}","difficulty":"${targetDifficulty}",` +
       `"prompt":"If 2x + 5 = 17, what is the value of x?",` +
       `"correctAnswer":"6","explanation":"Subtract 5: 2x = 12. Divide by 2: x = 6."}`;
     const content = await chat(
       `Generate ${count} original Digital SAT Math student-produced-response (SPR / grid-in) ` +
-        `practice questions for the skill "${skill}".\n` +
+        `practice questions for the skill "${skill}" at "${targetDifficulty}" difficulty.\n` +
         `Return ONLY a JSON array of objects — no prose, no markdown fences.\n` +
-        `Each object must have exactly these keys: responseFormat, section, skill, prompt, ` +
+        `Each object must have exactly these keys: responseFormat, section, skill, difficulty, prompt, ` +
         `correctAnswer, explanation. Optionally include answerTolerance.\n` +
         `- "responseFormat" must be "spr".\n` +
         `- "section" must be "math"; "skill" must be "${skill}".\n` +
+        `- "difficulty" must be exactly "${targetDifficulty}". Calibrate:\n` +
+        `    easy   = single computational or recall step.\n` +
+        `    medium = two steps or a less common skill.\n` +
+        `    hard   = multi-step reasoning or nuanced setup.\n` +
         `- "prompt" must be a clear math problem whose answer is a single number or fraction.\n` +
         `- "correctAnswer" must be the exact answer as a STRING. Accepted forms: integer ("7"), ` +
         `decimal ("3.14"), or simple fraction ("3/4"). Do NOT use mixed numbers ("1 1/2") — write ` +
@@ -144,7 +157,9 @@ export class OllamaCloudProvider implements AIProvider {
     }
     return parsed.map((q) =>
       q && typeof q === 'object' && !('responseFormat' in q)
-        ? { ...q, responseFormat: 'spr', section: 'math' }
+        ? { ...q, responseFormat: 'spr', section: 'math', difficulty: targetDifficulty }
+        : q && typeof q === 'object' && !('difficulty' in q)
+        ? { ...q, difficulty: targetDifficulty }
         : q,
     ) as GeneratedQuestion[];
   }

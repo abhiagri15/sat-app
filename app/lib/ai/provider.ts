@@ -17,13 +17,16 @@ export type SolveResult =
   | { responseFormat: 'spr'; answer: string };
 
 export interface AIProvider {
-  // Generate `count` questions for one (section, skill). Caller decides
-  // whether to request mcq or spr via the `useSpr` flag (spr is Math-only).
+  // Generate `count` questions for one (section, skill, difficulty).
+  // Caller decides mcq vs spr via the `useSpr` flag (spr is Math-only).
+  // Sub-project #11 added `targetDifficulty` so the thinnest-first picker
+  // can request the difficulty cell that's underfilled.
   generateQuestions(
     section: 'rw' | 'math',
     skill: string,
     count: number,
     useSpr: boolean,
+    targetDifficulty: 'easy' | 'medium' | 'hard',
   ): Promise<GeneratedQuestion[]>;
   // Re-solve a question for the self-verify gate. Branches on responseFormat.
   solve(q: SolveInput): Promise<SolveResult>;

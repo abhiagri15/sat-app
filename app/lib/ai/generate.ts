@@ -56,7 +56,11 @@ interface QuestionRow {
   section: 'rw' | 'math';
   skill: string;
   enabled: boolean;
+  difficulty: 'easy' | 'medium' | 'hard';
 }
+
+type Difficulty = 'easy' | 'medium' | 'hard';
+const DIFFICULTIES: readonly Difficulty[] = ['easy', 'medium', 'hard'] as const;
 
 export async function runGeneration(): Promise<GenerationSummary> {
   const admin = createAdminClient();
@@ -89,38 +93,52 @@ export async function runGeneration(): Promise<GenerationSummary> {
   const { data: qData, error: qError } = await admin
     .schema('sat')
     .from('questions')
-    .select('id, section, skill, enabled');
+    .select('id, section, skill, enabled, difficulty');
   if (qError) throw qError;
   const questions = (qData ?? []) as unknown as QuestionRow[];
   const enabled = questions.filter((q) => q.enabled);
 
-  // 3. Compute depth per (section, skill) — feeds both gates and the picker.
+  // 3. Compute depth per (section, skill, difficulty) — feeds both gates and
+  //    the picker. Sub-project #11 made the floor per difficulty cell so a
+  //    new skill needs SKILL_FLOOR easy + medium + hard before the floor stops
+  //    firing.
   const depth = new Map<string, number>();
   for (const q of enabled) {
-    const key = `${q.section}|${q.skill}`;
+    const key = `${q.section}|${q.skill}|${q.difficulty}`;
     depth.set(key, (depth.get(key) ?? 0) + 1);
   }
   const belowFloor = (['rw', 'math'] as const).some((section) =>
-    SKILLS[section].some(
-      (skill) => (depth.get(`${section}|${skill}`) ?? 0) < SKILL_FLOOR,
+    SKILLS[section].some((skill) =>
+      DIFFICULTIES.some(
+        (diff) => (depth.get(`${section}|${skill}|${diff}`) ?? 0) < SKILL_FLOOR,
+      ),
     ),
   );
 
-  // 4. Dual gate: skip iff the per-user buffer is healthy AND every slot is
+  // 4. Dual gate: skip iff the per-user buffer is healthy AND every cell is
   //    at or above the floor. Either condition failing keeps the run going.
-  //    The buffer gate stops over-generation; the floor gate guarantees that
-  //    a freshly-added skill gets at least SKILL_FLOOR questions before the
-  //    generator goes back to no-op.
   const bufferHealthy = (minUnseen as number) >= BUFFER_TARGET;
   if (bufferHealthy && !belowFloor) {
     return summary;
   }
 
-  // 5. Pick the thinnest (section, skill) slots — same data as the depth map.
-  const slots: { section: 'rw' | 'math'; skill: string; have: number }[] = [];
+  // 5. Pick the thinnest (section, skill, difficulty) triples.
+  const slots: {
+    section: 'rw' | 'math';
+    skill: string;
+    difficulty: Difficulty;
+    have: number;
+  }[] = [];
   for (const section of ['rw', 'math'] as const) {
     for (const skill of SKILLS[section]) {
-      slots.push({ section, skill, have: depth.get(`${section}|${skill}`) ?? 0 });
+      for (const difficulty of DIFFICULTIES) {
+        slots.push({
+          section,
+          skill,
+          difficulty,
+          have: depth.get(`${section}|${skill}|${difficulty}`) ?? 0,
+        });
+      }
     }
   }
   const targets = slots
@@ -134,9 +152,11 @@ export async function runGeneration(): Promise<GenerationSummary> {
     const useSpr = t.section === 'math' && Math.random() < SPR_PROBABILITY;
     let candidates;
     try {
-      candidates = await provider.generateQuestions(t.section, t.skill, PER_SKILL_BATCH, useSpr);
+      candidates = await provider.generateQuestions(
+        t.section, t.skill, PER_SKILL_BATCH, useSpr, t.difficulty,
+      );
     } catch (e) {
-      console.error('[generate] provider error', t.section, t.skill, e);
+      console.error('[generate] provider error', t.section, t.skill, t.difficulty, e);
       continue;
     }
     for (const candidate of candidates) {
@@ -144,9 +164,9 @@ export async function runGeneration(): Promise<GenerationSummary> {
       const parsed = generatedQuestionSchema.safeParse(candidate);
       if (!parsed.success) { summary.rejectedSchema++; continue; }
       const q = parsed.data;
-      // Pin section/skill to what we requested — reject a question the model
-      // mis-tagged (it keeps the SKILLS taxonomy and depth-balancing honest).
-      if (q.section !== t.section || q.skill !== t.skill) {
+      // Pin section/skill/difficulty to what we requested — reject a question
+      // the model mis-tagged (keeps the SKILLS × difficulty depth-balancing honest).
+      if (q.section !== t.section || q.skill !== t.skill || q.difficulty !== t.difficulty) {
         summary.rejectedSchema++;
         continue;
       }
@@ -189,6 +209,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
       // (the runner ignores them when response_format = 'spr'). Explicit
       // wider field types so the conditional doesn't get narrowed to one
       // branch's literal types by Supabase's insert type inference.
+      const nowIso = new Date().toISOString();
       const row: {
         id: string;
         section: 'rw' | 'math';
@@ -203,6 +224,8 @@ export async function runGeneration(): Promise<GenerationSummary> {
         correct_answer: string | null;
         answer_tolerance: number | null;
         dedup_hash: string;
+        difficulty: 'easy' | 'medium' | 'hard';
+        classified_at: string;
       } = q.responseFormat === 'mcq'
         ? {
             id: `ai-${randomUUID()}`,
@@ -218,6 +241,8 @@ export async function runGeneration(): Promise<GenerationSummary> {
             correct_answer: null,
             answer_tolerance: null,
             dedup_hash: dedupHash(q.prompt, q.choices, q.passage),
+            difficulty: q.difficulty,
+            classified_at: nowIso,
           }
         : {
             id: `ai-${randomUUID()}`,
@@ -232,12 +257,9 @@ export async function runGeneration(): Promise<GenerationSummary> {
             response_format: 'spr',
             correct_answer: q.correctAnswer,
             answer_tolerance: q.answerTolerance ?? null,
-            // Dedup hash for SPR is over (prompt, correctAnswer) — choices
-            // are empty placeholders so they would collapse all spr rows
-            // to the same hash if used. Pass [correctAnswer] as the "choices"
-            // input so dedupHash's normalisation still distinguishes
-            // semantically different questions.
             dedup_hash: dedupHash(q.prompt, [q.correctAnswer]),
+            difficulty: q.difficulty,
+            classified_at: nowIso,
           };
 
       const { error } = await admin.schema('sat').from('questions').insert(row);
