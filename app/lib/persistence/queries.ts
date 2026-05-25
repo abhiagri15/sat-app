@@ -3,8 +3,10 @@ import type { Question } from '@/app/lib/questions';
 
 export interface SectionBreakdownEntry {
   name: string;
+  sectionKey: 'rw' | 'math';
   correct: number;
   total: number;
+  scaled: number;
 }
 
 // A test_attempts row, as listed on /dashboard.
