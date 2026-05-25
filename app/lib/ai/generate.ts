@@ -19,6 +19,12 @@ import { createAdminClient } from '@/app/lib/supabase/admin';
 // the generator: a question served only to Dhruv looked "used" even though
 // every other student still had it ahead of them.)
 const BUFFER_TARGET = 100;
+// Minimum enabled questions per (section, skill) slot. The gate fires
+// generation even when the per-user buffer is healthy if any slot is below
+// this floor — so newly-added skills auto-populate via the thinnest-first
+// picker without a manual backfill. Set to perRun so one batch fills a fresh
+// slot to the floor.
+const SKILL_FLOOR = 3;
 // Bounded per invocation to fit the serverless time budget. Each Ollama call
 // (~30-60s for DeepSeek) is slow: 1 skill x batch 3 = 1 generate + up to 3
 // self-verify calls (~4 calls, within maxDuration=300s). Survivors are inserted
@@ -59,23 +65,22 @@ export async function runGeneration(): Promise<GenerationSummary> {
     rejectedDuplicate: 0,
   };
 
-  // 1. Per-user gate. The RPC returns the smallest unseen-enabled-questions
-  //    count across all active students (those with ≥ 1 attempt). When that
-  //    is null, nobody is using the app yet — there is no demand. When it is
-  //    ≥ BUFFER_TARGET, the worst-off student still has plenty of fresh
-  //    questions ahead of them and we skip. Fail loud on a DB error — a
-  //    silent "null" would let the generator run unnecessarily.
+  // 1. Per-user gate (cheap RPC). The function returns the smallest unseen-
+  //    enabled-questions count across active students (those with ≥ 1 attempt).
+  //    null = nobody using the app yet — no demand, hard skip. A number is the
+  //    worst-off student's unseen count; combined with the floor check below
+  //    it decides whether to generate.
   const { data: minUnseen, error: minError } = await admin
     .schema('sat')
     .rpc('min_active_user_unseen');
   if (minError) throw minError;
   summary.minUnseenBefore = (minUnseen ?? null) as number | null;
-  if (minUnseen === null || (minUnseen as number) >= BUFFER_TARGET) {
-    return summary; // buffer healthy (or no active users) — nothing to do
+  if (minUnseen === null) {
+    return summary; // no active students yet — nothing to do
   }
 
-  // 2. load the enabled pool (only needed once we know we will generate, so
-  //    the healthy-buffer fast path above avoids loading it).
+  // 2. Load the enabled pool. We need it for both the floor gate and the
+  //    thinnest-first picker, so load once and share.
   const { data: qData, error: qError } = await admin
     .schema('sat')
     .from('questions')
@@ -84,13 +89,29 @@ export async function runGeneration(): Promise<GenerationSummary> {
   const questions = (qData ?? []) as unknown as QuestionRow[];
   const enabled = questions.filter((q) => q.enabled);
 
-  // 3. pick the thinnest (section, skill) slots, so topic coverage stays even
-  //    as the hourly runs refill the buffer.
+  // 3. Compute depth per (section, skill) — feeds both gates and the picker.
   const depth = new Map<string, number>();
   for (const q of enabled) {
     const key = `${q.section}|${q.skill}`;
     depth.set(key, (depth.get(key) ?? 0) + 1);
   }
+  const belowFloor = (['rw', 'math'] as const).some((section) =>
+    SKILLS[section].some(
+      (skill) => (depth.get(`${section}|${skill}`) ?? 0) < SKILL_FLOOR,
+    ),
+  );
+
+  // 4. Dual gate: skip iff the per-user buffer is healthy AND every slot is
+  //    at or above the floor. Either condition failing keeps the run going.
+  //    The buffer gate stops over-generation; the floor gate guarantees that
+  //    a freshly-added skill gets at least SKILL_FLOOR questions before the
+  //    generator goes back to no-op.
+  const bufferHealthy = (minUnseen as number) >= BUFFER_TARGET;
+  if (bufferHealthy && !belowFloor) {
+    return summary;
+  }
+
+  // 5. Pick the thinnest (section, skill) slots — same data as the depth map.
   const slots: { section: 'rw' | 'math'; skill: string; have: number }[] = [];
   for (const section of ['rw', 'math'] as const) {
     for (const skill of SKILLS[section]) {
@@ -101,7 +122,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
     .sort((a, b) => a.have - b.have)
     .slice(0, MAX_SKILLS_PER_RUN);
 
-  // 4. generate, gate, insert
+  // 6. generate, gate, insert
   const provider = getProvider();
   for (const t of targets) {
     let candidates;

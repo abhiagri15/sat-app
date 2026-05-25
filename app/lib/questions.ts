@@ -397,22 +397,33 @@ export const SECTION_CONFIG = {
 export const SECTION_ORDER = ['rw', 'math'] as const;
 export type SectionKey = (typeof SECTION_ORDER)[number];
 
-// The skill taxonomy the AI generator targets — the distinct skills present
-// in BANK. Keep in sync with BANK's `skill` values.
+// The skill taxonomy the AI generator targets — covers all College Board
+// Digital SAT domains (R&W: Craft and Structure, Information and Ideas,
+// Standard English Conventions, Expression of Ideas; Math: Algebra,
+// Advanced Math, Problem-Solving and Data Analysis, Geometry and
+// Trigonometry). Alphabetised within each section. Keep in sync with
+// the n8n workflow's Plan Batches `SKILLS` constant (manual sync — see
+// CLAUDE.md "AI sub-project gotchas").
 export const SKILLS: Record<SectionKey, string[]> = {
   rw: [
     'Boundaries (Modifiers)',
     'Boundaries (Punctuation)',
     'Central Ideas',
     'Command of Evidence',
+    'Command of Evidence (Quantitative)',
+    'Cross-Text Connections',
     'Form & Structure (Verbs)',
+    'Inferences',
     'Pronoun Agreement',
     'Rhetorical Synthesis',
     'Subject-Verb Agreement',
+    'Text Structure and Purpose',
     'Transitions',
     'Words in Context',
   ],
   math: [
+    'Circles',
+    'Equivalent Expressions',
     'Exponential Growth',
     'Exponents',
     'Functions',
@@ -425,9 +436,13 @@ export const SKILLS: Record<SectionKey, string[]> = {
     'Probability',
     'Quadratics',
     'Ratios & Proportions',
+    'Right Triangle Trigonometry',
+    'Scatterplots & Models',
     'Slope & Lines',
     'Statistics (Mean)',
+    'Statistics (Spread)',
     'Systems of Equations',
+    'Volume',
   ],
 };
 
