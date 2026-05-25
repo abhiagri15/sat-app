@@ -5,6 +5,7 @@ import {
   buildTest,
   computeResults,
   type Results,
+  type ResponseValue,
   type Test,
   type TestLength,
 } from '@/app/lib/test';
@@ -26,7 +27,9 @@ export interface TestSession {
   test: Test | null;
   secIdx: number;
   qIdx: number;
-  responses: (number | null)[][];
+  // Per-question answer matrix. mcq questions hold the chosen choice index
+  // (number); SPR questions hold the entered string. null = unanswered.
+  responses: ResponseValue[][];
   remaining: number[];
   showReview: boolean;
   toggleReview: () => void;
@@ -35,7 +38,9 @@ export interface TestSession {
   sessionCompletions: number; // tests submitted this browser session
   // actions
   start: () => void;
-  selectChoice: (i: number) => void;
+  // Records the user's answer for the current question. number for mcq
+  // (the chosen choice index), string for SPR (the typed entry).
+  setAnswer: (value: number | string) => void;
   goToQuestion: (qi: number) => void;
   submitSection: () => void;
   newTest: () => void;
@@ -50,7 +55,7 @@ export function useTestSession(initialName = ''): TestSession {
   const [test, setTest] = useState<Test | null>(null);
   const [secIdx, setSecIdx] = useState(0);
   const [qIdx, setQIdx] = useState(0);
-  const [responses, setResponses] = useState<(number | null)[][]>([]);
+  const [responses, setResponses] = useState<ResponseValue[][]>([]);
   const [remaining, setRemaining] = useState<number[]>([]);
   const [showReview, setShowReview] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -160,10 +165,10 @@ export function useTestSession(initialName = ''): TestSession {
     setScreen('test');
   };
 
-  const selectChoice = (i: number) => {
+  const setAnswer = (value: number | string) => {
     setResponses((prev) => {
       const next = prev.map((arr) => arr.slice());
-      next[secIdx][qIdx] = i;
+      next[secIdx][qIdx] = value;
       return next;
     });
   };
@@ -200,6 +205,6 @@ export function useTestSession(initialName = ''): TestSession {
     screen, name, setName, testLength, setTestLength,
     test, secIdx, qIdx, responses, remaining,
     showReview, toggleReview, loading, saveStatus, sessionCompletions,
-    start, selectChoice, goToQuestion, submitSection, newTest, results,
+    start, setAnswer, goToQuestion, submitSection, newTest, results,
   };
 }

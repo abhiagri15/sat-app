@@ -1,5 +1,14 @@
 // SAT seed question bank. Each entry's `id` is immutable once committed:
 // see Foundation spec Section 5 Step 4 sub-step 3 for the ordering rule.
+//
+// Two response formats:
+//   'mcq' (default) — multiple choice. Uses `choices` + `answerIndex`.
+//   'spr'           — student-produced response (numeric / fraction entry).
+//                     Uses `correctAnswer` + optional `answerTolerance`;
+//                     `choices` is unused (empty array) and `answerIndex`
+//                     is a placeholder (0). All BANK entries are mcq —
+//                     spr questions only enter the runtime via the
+//                     generator pipeline + sat.questions table.
 export interface Question {
   id: string;                  // `seed-rw-NNN` or `seed-math-NNN`, 1-indexed by order in this file
   section: 'rw' | 'math';
@@ -7,9 +16,12 @@ export interface Question {
   passage?: string;
   prompt: string;
   choices: string[];
-  answerIndex: number;         // index into `choices` (renamed from the old `answer`)
+  answerIndex: number;         // index into `choices` (mcq); placeholder 0 for spr
   explanation: string;         // may contain inline HTML (<b>, <i>) — trusted seed content
   source: 'seed' | 'ai';       // every Foundation entry is 'seed'
+  response_format?: 'mcq' | 'spr';   // undefined / 'mcq' = multiple choice
+  correct_answer?: string | null;    // SPR canonical answer (null for mcq)
+  answer_tolerance?: number | null;  // SPR float tolerance (null = exact)
 }
 
 export const BANK: Question[] = [
@@ -447,6 +459,8 @@ export const SKILLS: Record<SectionKey, string[]> = {
 };
 
 // Maps a sat.questions row (snake_case, choices as jsonb) to the Question type.
+// Reads response_format / correct_answer / answer_tolerance with safe defaults
+// so the function still works against rows from before the SPR migration ran.
 export function rowToQuestion(row: {
   id: string;
   section: string;
@@ -457,6 +471,9 @@ export function rowToQuestion(row: {
   answer_index: number;
   explanation: string;
   source: string;
+  response_format?: string | null;
+  correct_answer?: string | null;
+  answer_tolerance?: number | null;
 }): Question {
   return {
     id: row.id,
@@ -470,5 +487,8 @@ export function rowToQuestion(row: {
     answerIndex: row.answer_index,
     explanation: row.explanation,
     source: row.source as 'seed' | 'ai',
+    response_format: row.response_format === 'spr' ? 'spr' : 'mcq',
+    correct_answer: row.correct_answer ?? null,
+    answer_tolerance: row.answer_tolerance ?? null,
   };
 }

@@ -1,12 +1,16 @@
 'use client';
 
 import { LETTERS } from '@/app/lib/test';
+import type { ResponseValue } from '@/app/lib/test';
 import type { Question } from '@/app/lib/questions';
+import { isSprCorrect } from '@/app/lib/spr';
 import { FlagQuestion } from './FlagQuestion';
 
 interface ReviewItemProps {
   question: Question;
-  chosenIndex: number | null;
+  // Polymorphic: mcq questions hold a number | null; SPR questions hold a
+  // string | null. The component branches on question.response_format.
+  response: ResponseValue;
 }
 
 // NOTE: explanation rendering branches on `question.source`. Seed BANK content
@@ -14,13 +18,31 @@ interface ReviewItemProps {
 // content is rendered as React-escaped text (no HTML). This guard shipped with
 // the AI sub-project (#2) and is relied on by the attempt-review page (#4),
 // which renders snapshotted explanations through this component.
-export function ReviewItem({ question, chosenIndex }: ReviewItemProps) {
-  const isCorrect = chosenIndex === question.answerIndex;
+export function ReviewItem({ question, response }: ReviewItemProps) {
+  const isSpr = question.response_format === 'spr';
+
+  // Skipped: null/undefined (any format) or an empty trimmed string (SPR).
+  const skipped =
+    response == null ||
+    (typeof response === 'string' && response.trim() === '');
+
+  let isCorrect = false;
+  if (!skipped) {
+    if (isSpr) {
+      const entered = typeof response === 'string' ? response : '';
+      isCorrect =
+        question.correct_answer != null &&
+        isSprCorrect(entered, question.correct_answer, question.answer_tolerance ?? null);
+    } else if (typeof response === 'number') {
+      isCorrect = response === question.answerIndex;
+    }
+  }
+
   return (
     <div className="border-t border-slate-200 pt-4 mt-4 first:border-t-0 first:pt-0 first:mt-0">
       <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">
         {question.skill}{' '}
-        {chosenIndex === null ? (
+        {skipped ? (
           <span className="inline-block ml-2 rounded-full px-2 py-0.5 text-xs font-semibold bg-slate-200 text-slate-700">Skipped</span>
         ) : isCorrect ? (
           <span className="inline-block ml-2 rounded-full px-2 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-700">Correct</span>
@@ -34,24 +56,51 @@ export function ReviewItem({ question, chosenIndex }: ReviewItemProps) {
         </div>
       )}
       <div className="text-lg font-semibold mb-4">{question.prompt}</div>
-      <div className="text-sm mt-2">
-        Your answer:{' '}
-        {chosenIndex === null ? (
-          <i>none</i>
-        ) : (
-          <span className={isCorrect ? 'text-emerald-700 font-semibold' : 'text-red-700 font-semibold'}>
-            {LETTERS[chosenIndex]}. {question.choices[chosenIndex]}
-          </span>
-        )}
-      </div>
-      {!isCorrect && chosenIndex !== null && (
-        <div className="text-sm mt-2">
-          Correct answer:{' '}
-          <span className="text-emerald-700 font-semibold">
-            {LETTERS[question.answerIndex]}. {question.choices[question.answerIndex]}
-          </span>
-        </div>
+
+      {isSpr ? (
+        // SPR: show the typed answer, then the canonical answer when wrong.
+        <>
+          <div className="text-sm mt-2">
+            Your answer:{' '}
+            {skipped ? (
+              <i>none</i>
+            ) : (
+              <span className={isCorrect ? 'text-emerald-700 font-semibold' : 'text-red-700 font-semibold'}>
+                {String(response)}
+              </span>
+            )}
+          </div>
+          {!isCorrect && !skipped && question.correct_answer && (
+            <div className="text-sm mt-2">
+              Correct answer:{' '}
+              <span className="text-emerald-700 font-semibold">{question.correct_answer}</span>
+            </div>
+          )}
+        </>
+      ) : (
+        // mcq: show the chosen letter+choice, then the correct one when wrong.
+        <>
+          <div className="text-sm mt-2">
+            Your answer:{' '}
+            {skipped || typeof response !== 'number' ? (
+              <i>none</i>
+            ) : (
+              <span className={isCorrect ? 'text-emerald-700 font-semibold' : 'text-red-700 font-semibold'}>
+                {LETTERS[response]}. {question.choices[response]}
+              </span>
+            )}
+          </div>
+          {!isCorrect && !skipped && (
+            <div className="text-sm mt-2">
+              Correct answer:{' '}
+              <span className="text-emerald-700 font-semibold">
+                {LETTERS[question.answerIndex]}. {question.choices[question.answerIndex]}
+              </span>
+            </div>
+          )}
+        </>
       )}
+
       <div className="mt-3 text-sm text-slate-700">
         <b className="text-blue-700">Why:</b>{' '}
         {question.source === 'seed' ? (

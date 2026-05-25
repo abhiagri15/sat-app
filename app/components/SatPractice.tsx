@@ -47,7 +47,7 @@ export default function SatPractice({
         sectionResponses={sectionResponses}
         remaining={remaining}
         studentName={s.test.name}
-        onSelect={s.selectChoice}
+        onAnswer={s.setAnswer}
         onGoToQuestion={s.goToQuestion}
         onPrev={() => s.goToQuestion(Math.max(0, s.qIdx - 1))}
         onNext={() => s.goToQuestion(Math.min(section.questions.length - 1, s.qIdx + 1))}

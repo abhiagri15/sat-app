@@ -1,7 +1,12 @@
 import type { Question, SectionKey } from './questions';
 import { BANK as DEFAULT_BANK, SECTION_CONFIG, SECTION_ORDER } from './questions';
+import { isSprCorrect } from './spr';
 
 export const LETTERS = ['A', 'B', 'C', 'D', 'E'] as const;
+
+// A per-question response. mcq answers are the chosen index (0..3); spr
+// answers are the entered string (e.g. "3.14" or "1/2"); null = unanswered.
+export type ResponseValue = number | string | null;
 
 export interface TestSection {
   key: SectionKey;
@@ -32,8 +37,11 @@ export function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-// Shuffles a question's `choices` and rewrites `answerIndex` to point to the new position.
+// Shuffles a question's `choices` and rewrites `answerIndex` to point to the
+// new position. No-op for SPR questions (their `choices` is a placeholder
+// empty array; the answer is the typed `correct_answer` text).
 export function shuffleChoices(q: Question): Question {
+  if (q.response_format === 'spr') return q;
   const idxs = shuffle(q.choices.map((_, i) => i));
   return {
     ...q,
@@ -64,14 +72,25 @@ export function buildTest(
 
 export function computeResults(
   test: Test,
-  responses: (number | null)[][],
+  responses: ResponseValue[][],
 ): Results {
   let totalCorrect = 0;
   let totalQ = 0;
   const perSection = test.sections.map((sec, si) => {
     let correct = 0;
     sec.questions.forEach((q, qi) => {
-      if (responses[si][qi] === q.answerIndex) correct++;
+      const v = responses[si][qi];
+      if (q.response_format === 'spr') {
+        if (
+          typeof v === 'string' &&
+          q.correct_answer &&
+          isSprCorrect(v, q.correct_answer, q.answer_tolerance ?? null)
+        ) {
+          correct++;
+        }
+      } else if (v === q.answerIndex) {
+        correct++;
+      }
     });
     totalCorrect += correct;
     totalQ += sec.questions.length;

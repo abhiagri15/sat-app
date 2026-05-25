@@ -59,7 +59,9 @@ export default async function AttemptReviewPage({
               <ReviewItem
                 key={row.id}
                 question={responseToQuestion(row)}
-                chosenIndex={row.chosen_index}
+                // For mcq rows pass chosen_index; for spr rows pass the
+                // entered string. Either is null when skipped.
+                response={row.response_format === 'spr' ? row.entered_value : row.chosen_index}
               />
             ))}
           </section>

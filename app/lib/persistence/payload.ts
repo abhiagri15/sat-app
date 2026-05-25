@@ -1,12 +1,15 @@
 import type { SectionKey } from '@/app/lib/questions';
-import type { Test, Results, TestLength } from '@/app/lib/test';
+import type { Test, Results, TestLength, ResponseValue } from '@/app/lib/test';
+import { isSprCorrect } from '@/app/lib/spr';
 
 // One persisted question in an attempt — the question AS PRESENTED plus the
-// user's answer. `choices`/`answerIndex` are the shuffled values (spec D4).
+// user's answer. `choices`/`answerIndex` are the shuffled values (spec D4)
+// for mcq rows; placeholder for spr rows (correct_answer + entered_value
+// carry the meaningful comparison).
 export interface AttemptResponsePayload {
   sectionKey: SectionKey;
   sectionName: string;
-  position: number;            // 0-indexed within the section
+  position: number;                // 0-indexed within the section
   questionId: string;
   skill: string;
   source: 'seed' | 'ai';
@@ -15,7 +18,11 @@ export interface AttemptResponsePayload {
   choices: string[];
   answerIndex: number;
   explanation: string;
-  chosenIndex: number | null;  // null = skipped
+  responseFormat: 'mcq' | 'spr';
+  chosenIndex: number | null;      // mcq: chosen 0..3 / null = skipped. SPR: null.
+  enteredValue: string | null;     // SPR: what the student typed / null. mcq: null.
+  correctAnswer: string | null;    // SPR canonical answer (snapshot). null for mcq.
+  answerTolerance: number | null;  // SPR float tolerance (snapshot). null for mcq.
   isCorrect: boolean;
 }
 
@@ -31,9 +38,14 @@ export interface AttemptPayload {
 }
 
 // Pure: maps a finished in-memory test into the persisted payload. No I/O.
+// Branches per question on response_format: mcq writes chosenIndex from the
+// numeric responses[si][qi]; spr writes enteredValue from the string.
+// isCorrect is computed here (JS) AND server-side (sat.spr_is_correct via
+// save_attempt) — the server is the source of truth, this value is a hint
+// used for the immediate post-submit results screen.
 export function toAttemptPayload(
   test: Test,
-  responses: (number | null)[][],
+  responses: ResponseValue[][],
   results: Results,
   testLength: TestLength,
 ): AttemptPayload {
@@ -42,7 +54,18 @@ export function toAttemptPayload(
     const section = test.sections[si];
     for (let qi = 0; qi < section.questions.length; qi++) {
       const q = section.questions[qi];
-      const chosenIndex = responses[si]?.[qi] ?? null;
+      const v = responses[si]?.[qi] ?? null;
+      const isSpr = q.response_format === 'spr';
+
+      const chosenIndex = !isSpr && typeof v === 'number' ? v : null;
+      const enteredValue = isSpr && typeof v === 'string' ? v : null;
+
+      const isCorrect = isSpr
+        ? enteredValue !== null &&
+          q.correct_answer != null &&
+          isSprCorrect(enteredValue, q.correct_answer, q.answer_tolerance ?? null)
+        : chosenIndex === q.answerIndex;
+
       attemptResponses.push({
         sectionKey: section.key,
         sectionName: section.name,
@@ -55,8 +78,12 @@ export function toAttemptPayload(
         choices: q.choices,
         answerIndex: q.answerIndex,
         explanation: q.explanation,
+        responseFormat: isSpr ? 'spr' : 'mcq',
         chosenIndex,
-        isCorrect: chosenIndex === q.answerIndex,
+        enteredValue,
+        correctAnswer: q.correct_answer ?? null,
+        answerTolerance: q.answer_tolerance ?? null,
+        isCorrect,
       });
     }
   }

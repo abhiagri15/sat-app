@@ -55,6 +55,11 @@ export interface AttemptResponseRow {
   explanation: string;
   chosen_index: number | null;
   is_correct: boolean;
+  // SPR snapshot fields. Null/empty for mcq rows.
+  response_format: 'mcq' | 'spr';
+  entered_value: string | null;
+  correct_answer: string | null;
+  answer_tolerance: number | null;
 }
 
 export interface AttemptDetail {
@@ -63,7 +68,7 @@ export interface AttemptDetail {
 }
 
 const RESPONSE_COLUMNS =
-  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct';
+  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct, response_format, entered_value, correct_answer, answer_tolerance';
 
 // One attempt with all its responses, or null if it does not exist / is not
 // the caller's (RLS) / the id is not a valid uuid (a malformed id makes the
@@ -106,5 +111,8 @@ export function responseToQuestion(row: AttemptResponseRow): Question {
     answerIndex: row.answer_index,
     explanation: row.explanation,
     source: row.source,
+    response_format: row.response_format === 'spr' ? 'spr' : 'mcq',
+    correct_answer: row.correct_answer,
+    answer_tolerance: row.answer_tolerance,
   };
 }

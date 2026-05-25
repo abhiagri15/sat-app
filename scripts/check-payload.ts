@@ -14,7 +14,10 @@ function assert(cond: boolean, msg: string): void {
 const test = buildTest('Test Student', 'short');
 
 // section 0: every answer correct. section 1: first question skipped, rest wrong.
-const responses: (number | null)[][] = test.sections.map((sec, si) =>
+// (BANK is all mcq, so this test exercises only the mcq path. SPR payload
+// behaviour is covered by sat.spr_is_correct sanity SQL + scripts/check-spr.ts.)
+import type { ResponseValue } from '../app/lib/test';
+const responses: ResponseValue[][] = test.sections.map((sec, si) =>
   sec.questions.map((q, qi) => {
     if (si === 0) return q.answerIndex;               // correct
     if (qi === 0) return null;                        // skipped

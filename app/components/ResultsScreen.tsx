@@ -1,6 +1,6 @@
 'use client';
 
-import type { Test, Results } from '@/app/lib/test';
+import type { Test, Results, ResponseValue } from '@/app/lib/test';
 import type { SaveStatus } from '@/app/hooks/useTestSession';
 import { ReviewItem } from './ReviewItem';
 import { Button } from '@/app/components/ui/button';
@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/app/components/ui/card';
 
 interface ResultsScreenProps {
   test: Test;
-  responses: (number | null)[][];
+  responses: ResponseValue[][];
   results: Results;
   saveStatus: SaveStatus;
   showReview: boolean;
@@ -79,7 +79,7 @@ export function ResultsScreen({
                 {sec.name} — review
               </h2>
               {sec.questions.map((q, qi) => (
-                <ReviewItem key={qi} question={q} chosenIndex={responses[si][qi]} />
+                <ReviewItem key={qi} question={q} response={responses[si][qi]} />
               ))}
             </div>
           ))}
