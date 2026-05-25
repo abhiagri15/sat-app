@@ -26,6 +26,30 @@ export async function setQuestionEnabled(
   revalidatePath(`/admin/questions/${id}`);
 }
 
+// Update the difficulty tag on a pool question. Admin-only; writes via the
+// service-role client (sat.questions is RLS write-locked). Sub-project #11.
+export async function setQuestionDifficulty(
+  id: string,
+  difficulty: 'easy' | 'medium' | 'hard',
+): Promise<void> {
+  await requireAdmin();
+  if (!['easy', 'medium', 'hard'].includes(difficulty)) {
+    throw new Error('Invalid difficulty.');
+  }
+  const admin = createAdminClient();
+  const { error } = await admin
+    .schema('sat')
+    .from('questions')
+    .update({ difficulty, classified_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) {
+    console.error('[setQuestionDifficulty] failed:', error);
+    throw new Error('Failed to update the difficulty.');
+  }
+  revalidatePath(`/admin/questions/${id}`);
+  revalidatePath('/admin/questions');
+}
+
 // Resolve a question flag. Admin-only; writes via the service-role client
 // (question_flags has no RLS policy).
 export async function resolveFlag(flagId: string): Promise<void> {

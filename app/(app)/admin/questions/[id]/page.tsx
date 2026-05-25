@@ -1,8 +1,20 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getQuestion } from '@/app/lib/admin/queries';
-import { setQuestionEnabled } from '@/app/lib/admin/actions';
+import { setQuestionEnabled, setQuestionDifficulty } from '@/app/lib/admin/actions';
 import { LETTERS } from '@/app/lib/test';
+
+const DIFFICULTY_BADGE: Record<'easy' | 'medium' | 'hard', string> = {
+  easy:   'bg-blue-100 text-blue-700',
+  medium: 'bg-slate-200 text-slate-700',
+  hard:   'bg-amber-100 text-amber-800',
+};
+
+async function updateDifficulty(id: string, formData: FormData): Promise<void> {
+  'use server';
+  const next = formData.get('difficulty') as 'easy' | 'medium' | 'hard';
+  await setQuestionDifficulty(id, next);
+}
 
 export default async function AdminQuestionPage({
   params,
@@ -26,6 +38,9 @@ export default async function AdminQuestionPage({
           {q.section === 'rw' ? 'Reading & Writing' : 'Math'}
         </span>
         <span>{q.skill}</span>
+        <span className={`rounded-full px-2 py-0.5 font-medium ${DIFFICULTY_BADGE[q.difficulty]}`}>
+          {q.difficulty}
+        </span>
         <span className="rounded bg-slate-100 px-1.5 py-0.5">{q.source}</span>
         <span>{q.id}</span>
         {q.enabled ? (
@@ -35,6 +50,11 @@ export default async function AdminQuestionPage({
         ) : (
           <span className="rounded-full bg-red-100 px-2 py-0.5 font-medium text-red-700">
             Disabled
+          </span>
+        )}
+        {q.classified_at === null && (
+          <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-yellow-800">
+            unclassified
           </span>
         )}
       </div>
@@ -68,21 +88,43 @@ export default async function AdminQuestionPage({
         {q.explanation}
       </div>
 
-      <form
-        action={setQuestionEnabled.bind(null, q.id, !q.enabled)}
-        className="mt-6"
-      >
-        <button
-          type="submit"
-          className={`rounded px-3 py-1.5 text-sm font-medium ${
-            q.enabled
-              ? 'bg-red-50 text-red-700 hover:bg-red-100'
-              : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-          }`}
+      <div className="mt-6 flex flex-wrap items-end gap-4">
+        <form
+          action={setQuestionEnabled.bind(null, q.id, !q.enabled)}
         >
-          {q.enabled ? 'Disable this question' : 'Enable this question'}
-        </button>
-      </form>
+          <button
+            type="submit"
+            className={`rounded px-3 py-1.5 text-sm font-medium ${
+              q.enabled
+                ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+            }`}
+          >
+            {q.enabled ? 'Disable this question' : 'Enable this question'}
+          </button>
+        </form>
+
+        <form action={updateDifficulty.bind(null, q.id)} className="flex items-end gap-2">
+          <label className="flex flex-col text-xs text-slate-600">
+            <span>Difficulty</span>
+            <select
+              name="difficulty"
+              defaultValue={q.difficulty}
+              className="mt-0.5 rounded border border-slate-300 bg-white px-2 py-1 text-sm"
+            >
+              <option value="easy">easy</option>
+              <option value="medium">medium</option>
+              <option value="hard">hard</option>
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="rounded bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100"
+          >
+            Save
+          </button>
+        </form>
+      </div>
     </main>
   );
 }

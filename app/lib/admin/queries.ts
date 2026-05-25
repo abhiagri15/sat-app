@@ -12,6 +12,8 @@ export interface AdminQuestion {
   source: 'seed' | 'ai';
   enabled: boolean;
   created_at: string;
+  difficulty: 'easy' | 'medium' | 'hard';      // Sub-project #11
+  classified_at: string | null;                // Sub-project #11
 }
 
 export interface PoolCounts {
@@ -27,10 +29,11 @@ export interface PoolCounts {
 export interface QuestionFilters {
   section?: 'rw' | 'math';
   status?: 'enabled' | 'disabled';
+  difficulty?: 'easy' | 'medium' | 'hard';
 }
 
 const QUESTION_COLUMNS =
-  'id, section, skill, passage, prompt, choices, answer_index, explanation, source, enabled, created_at';
+  'id, section, skill, passage, prompt, choices, answer_index, explanation, source, enabled, created_at, difficulty, classified_at';
 
 // The question pool, newest first, filtered, capped at 200 rows.
 export async function listQuestions(
@@ -41,6 +44,7 @@ export async function listQuestions(
   if (filters.section) query = query.eq('section', filters.section);
   if (filters.status === 'enabled') query = query.eq('enabled', true);
   if (filters.status === 'disabled') query = query.eq('enabled', false);
+  if (filters.difficulty) query = query.eq('difficulty', filters.difficulty);
   const { data, error } = await query
     .order('created_at', { ascending: false })
     .limit(200);
