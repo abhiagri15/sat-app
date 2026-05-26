@@ -49,6 +49,10 @@ export interface GenerationSummary {
   rejectedSchema: number;
   rejectedSelfVerify: number;
   rejectedDuplicate: number;
+  // Sub-project #11 follow-up: rejected because the multi-validity check
+  // found more than one valid choice (e.g. a quadratic with both roots in
+  // the choice list — see the flagged question from 2026-05-25).
+  rejectedMultiValid: number;
 }
 
 interface QuestionRow {
@@ -72,6 +76,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
     rejectedSchema: 0,
     rejectedSelfVerify: 0,
     rejectedDuplicate: 0,
+    rejectedMultiValid: 0,
   };
 
   // 1. Per-user gate (cheap RPC). The function returns the smallest unseen-
@@ -203,6 +208,35 @@ export async function runGeneration(): Promise<GenerationSummary> {
         continue;
       }
       if (!verified) { summary.rejectedSelfVerify++; continue; }
+
+      // Multi-validity check (mcq only): the prior solve agreed on the
+      // generator's claimed answer, but the choice list may still contain
+      // a SECOND valid answer (e.g. a quadratic with both roots listed).
+      // Ask the model to evaluate every choice and reject if > 1 valid.
+      // SPR has no choices so this check is skipped.
+      if (q.responseFormat === 'mcq') {
+        let validIndices: number[] = [];
+        try {
+          validIndices = await provider.findValidChoices({
+            responseFormat: 'mcq',
+            section: q.section,
+            skill: q.skill,
+            passage: q.passage,
+            prompt: q.prompt,
+            choices: q.choices,
+          });
+        } catch (e) {
+          console.error('[generate] findValidChoices error', e);
+          summary.rejectedMultiValid++;
+          continue;
+        }
+        if (validIndices.length !== 1 || validIndices[0] !== q.answerIndex) {
+          // Either > 1 valid (faulty choice list) or solver disagreed on
+          // the single valid index. Either way, drop the candidate.
+          summary.rejectedMultiValid++;
+          continue;
+        }
+      }
 
       // Build the insert row. mcq uses choices + answer_index; spr uses
       // correct_answer + answer_tolerance with placeholder choices/index

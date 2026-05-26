@@ -92,6 +92,7 @@ export class OllamaCloudProvider implements AIProvider {
         `    hard   = multi-step reasoning, careful reading, or nuanced inference.\n` +
         `- "choices" must be an array of exactly 4 distinct strings.\n` +
         `- "answerIndex" must be an integer 0-3: the 0-based index of the correct choice.\n` +
+        `- CRITICAL distractor uniqueness rule: exactly ONE of the 4 choices may be a valid answer. The other 3 must be plausible distractors that are NOT valid answers. For math equations with multiple solutions (e.g. quadratics with two roots, |x|=c with two values), include only ONE of the solutions in the choices — never both roots, never both values. The other 3 should be common-mistake values (sign errors, dropped terms, miscalculated discriminants). For R&W "best choice" questions, ensure only one choice is unambiguously best; the others must be defensibly worse on inspection. Candidates that violate this rule are rejected by the self-verify multi-validity check.\n` +
         `- "explanation" must be PLAIN TEXT (no HTML, no markdown) saying why the answer is correct.\n` +
         `- IMPORTANT: in "explanation", NEVER refer to a choice by its letter or number (no "Choice A", "Option B", "choice 3", etc.). The app shuffles choices per test, so any letter/number reference becomes wrong at runtime. Refer to the chosen option as "the correct choice" or by quoting its content; refer to incorrect ones as "the other choices" / "the option that says X".\n` +
         (section === 'rw'
@@ -190,5 +191,49 @@ export class OllamaCloudProvider implements AIProvider {
     const m = trimmed.match(/^[0-3]$/) ?? trimmed.match(/\b[0-3]\b/);
     if (!m) throw new Error(`Ollama solve: no index in response: ${trimmed.slice(0, 80)}`);
     return { responseFormat: 'mcq', answerIndex: Number.parseInt(m[0], 10) };
+  }
+
+  // Multi-validity check for mcq questions. Asks the model to evaluate EACH
+  // of the 4 choices independently and report all that are valid. Used by
+  // generate.ts after the single-answer self-verify passes; a candidate with
+  // more than one valid index is rejected (the choice list is broken — e.g.
+  // a quadratic with both roots in the choices).
+  async findValidChoices(
+    q: Extract<SolveInput, { responseFormat: 'mcq' }>,
+  ): Promise<number[]> {
+    const content = await chat(
+      `For the Digital SAT question below, evaluate EACH of the 4 choices ` +
+        `independently and decide whether it is a valid correct answer. ` +
+        `A valid answer satisfies the question completely; do NOT include ` +
+        `choices that are merely plausible distractors. For math equations ` +
+        `with multiple roots (e.g. quadratics), every actual root that ` +
+        `appears in the list counts as valid.\n\n` +
+        `Respond with ONLY a JSON array of 0-based indices, e.g. [0] for one ` +
+        `valid choice, or [0,2] if two are valid. No prose, no markdown, ` +
+        `no other text.\n\n` +
+        (q.passage ? `Passage: ${q.passage}\n` : '') +
+        `Question: ${q.prompt}\n` +
+        q.choices.map((c, i) => `${i}: ${c}`).join('\n'),
+    );
+    // Tolerant extraction: look for the first JSON-array-of-ints in the
+    // response. Falls back to scraping individual 0-3 digits if the model
+    // returned an unfenced list like "0, 2".
+    const raw = content.trim();
+    let arr: number[] | null = null;
+    const fenced = raw.match(/\[\s*(?:[0-3]\s*,\s*)*[0-3]?\s*\]/);
+    if (fenced) {
+      try {
+        const parsed = JSON.parse(fenced[0]);
+        if (Array.isArray(parsed)) arr = parsed.filter((n) => Number.isInteger(n) && n >= 0 && n <= 3);
+      } catch {
+        /* fall through */
+      }
+    }
+    if (arr === null) {
+      const found = new Set<number>();
+      for (const m2 of raw.matchAll(/\b[0-3]\b/g)) found.add(Number.parseInt(m2[0], 10));
+      arr = [...found].sort();
+    }
+    return arr;
   }
 }

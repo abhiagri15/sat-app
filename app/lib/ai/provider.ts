@@ -30,6 +30,13 @@ export interface AIProvider {
   ): Promise<GeneratedQuestion[]>;
   // Re-solve a question for the self-verify gate. Branches on responseFormat.
   solve(q: SolveInput): Promise<SolveResult>;
+  // Multi-validity check for mcq self-verify: ask the model to identify ALL
+  // valid choice indices (not just the "best"). Used to reject a candidate
+  // when the choice list accidentally contains two correct answers — e.g. a
+  // quadratic with two roots where both roots appear in the choice list.
+  // Returns the list of 0-based indices the model judges valid (typically
+  // length 1; length > 1 means the candidate is faulty).
+  findValidChoices(q: Extract<SolveInput, { responseFormat: 'mcq' }>): Promise<number[]>;
 }
 
 // Provider factory — keyed on SAT_AI_PROVIDER so other providers can be added later.
