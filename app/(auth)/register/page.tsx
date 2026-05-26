@@ -124,6 +124,12 @@ export default function RegisterPage() {
             Sign in
           </Link>
         </p>
+        <p className="mt-6 text-center text-xs text-slate-500">
+          New here?{' '}
+          <Link href="/how-it-works" className="text-blue-600 hover:underline">
+            See how it works
+          </Link>
+        </p>
       </CardContent>
     </Card>
   );
