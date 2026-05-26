@@ -1,5 +1,6 @@
 import { getGeneratorState } from '@/app/lib/admin/queries';
 import { setNeverServedFloor } from '@/app/lib/admin/actions';
+import { SKILLS } from '@/app/lib/questions';
 
 // Admin pool composition view. Surfaces the same snapshot the question-
 // generator uses on its next run, plus a control to set the never-served
@@ -9,8 +10,15 @@ import { setNeverServedFloor } from '@/app/lib/admin/actions';
 //   - Status line: minActiveUserUnseen vs. bufferTarget, current floor.
 //   - Composition (section x difficulty, 6 cells): summed never-served
 //     across all skills in that bucket. Quick at-a-glance balance check.
-//   - Worst 10 (section, skill, difficulty) triples: the thinnest cells —
+//   - Worst N (section, skill, difficulty) triples: the thinnest cells —
 //     these are what the picker targets on the next run.
+//
+// Important: sat.generator_state() only returns cells that have at least
+// one never-served question. Cells with ZERO never-served are missing from
+// the RPC payload. To get an accurate "cells below floor" count and a
+// proper worst-N list, we cross-product the canonical SKILLS x difficulties
+// and fill missing cells with 0 — exactly the same pattern the generator's
+// Plan Batches uses.
 
 type Section = 'rw' | 'math';
 type Difficulty = 'easy' | 'medium' | 'hard';
@@ -22,28 +30,75 @@ const SECTION_LABEL: Record<Section, string> = {
   math: 'Math',
 };
 
-function difficultyClass(neverServed: number, floor: number): string {
+// Show this many worst cells. Bumped above 10 because empty cells are now
+// included — and there are usually a fair number of skill-difficulty cells
+// at zero before the generator catches up.
+const WORST_LIMIT = 20;
+
+function tone(neverServed: number, floor: number): string {
   if (neverServed >= floor) return 'text-emerald-700';
   if (neverServed >= Math.ceil(floor / 2)) return 'text-amber-700';
   return 'text-rose-700';
 }
 
+interface Cell {
+  section: Section;
+  skill: string;
+  difficulty: Difficulty;
+  neverServed: number;
+}
+
 export default async function AdminPoolPage() {
   const state = await getGeneratorState();
-  const { minActiveUserUnseen, neverServedFloor, bufferTarget, cells } = state;
+  const { minActiveUserUnseen, neverServedFloor, bufferTarget } = state;
 
-  // Sum never-served by (section, difficulty) for the 6-cell composition
-  // table. Cells the RPC omits (neverServed == 0) just don't add anything.
+  // Build a lookup of (section, skill, difficulty) -> neverServed from the
+  // RPC. Cells not present default to 0 below.
+  const rpcCounts = new Map<string, number>();
+  for (const c of state.cells) {
+    rpcCounts.set(`${c.section}|${c.skill}|${c.difficulty}`, c.neverServed);
+  }
+
+  // The full grid: every section x skill x difficulty triple, with zeros
+  // filled in for cells the RPC omitted.
+  const allCells: Cell[] = [];
+  for (const section of SECTIONS) {
+    for (const skill of SKILLS[section]) {
+      for (const difficulty of DIFFICULTIES) {
+        allCells.push({
+          section,
+          skill,
+          difficulty,
+          neverServed: rpcCounts.get(`${section}|${skill}|${difficulty}`) ?? 0,
+        });
+      }
+    }
+  }
+  const totalCells = allCells.length;
+
+  // Composition sum by (section, difficulty) from the full grid (zero cells
+  // contribute zero, so the math is identical — but a missing skill no
+  // longer artificially deflates the bucket above the floor).
   const composition = new Map<string, number>();
-  for (const c of cells) {
+  for (const c of allCells) {
     const key = `${c.section}|${c.difficulty}`;
     composition.set(key, (composition.get(key) ?? 0) + c.neverServed);
   }
 
-  // Below-floor triples first (thinnest first), then a long tail capped at
-  // the worst 10 — that's what the picker would touch on the next run.
-  const worst = [...cells].sort((a, b) => a.neverServed - b.neverServed).slice(0, 10);
-  const belowFloorCount = cells.filter((c) => c.neverServed < neverServedFloor).length;
+  // Worst-N thinnest cells. Stable tie-break by section then skill then
+  // difficulty so refreshes don't jiggle the list.
+  const worst = [...allCells]
+    .sort(
+      (a, b) =>
+        a.neverServed - b.neverServed ||
+        a.section.localeCompare(b.section) ||
+        a.skill.localeCompare(b.skill) ||
+        a.difficulty.localeCompare(b.difficulty),
+    )
+    .slice(0, WORST_LIMIT);
+
+  const belowFloorCount = allCells.filter((c) => c.neverServed < neverServedFloor).length;
+  const emptyCellCount = allCells.filter((c) => c.neverServed === 0).length;
   const bufferHealthy =
     typeof minActiveUserUnseen === 'number' && minActiveUserUnseen >= bufferTarget;
 
@@ -56,7 +111,7 @@ export default async function AdminPoolPage() {
         floor of never-served questions.
       </p>
 
-      <section className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <section className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-lg border border-slate-200 p-3">
           <div className="text-xs text-slate-500">Worst-off student unseen</div>
           <div
@@ -82,6 +137,17 @@ export default async function AdminPoolPage() {
             }`}
           >
             {belowFloorCount}
+            <span className="ml-1 text-sm text-slate-400">/ {totalCells}</span>
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-200 p-3">
+          <div className="text-xs text-slate-500">Empty cells (zero fresh)</div>
+          <div
+            className={`mt-1 text-2xl font-semibold ${
+              emptyCellCount === 0 ? 'text-emerald-700' : 'text-rose-700'
+            }`}
+          >
+            {emptyCellCount}
           </div>
         </div>
       </section>
@@ -161,49 +227,42 @@ export default async function AdminPoolPage() {
 
       <section className="mt-6">
         <h2 className="mb-2 text-sm font-medium text-slate-700">
-          Worst {worst.length} cells (thinnest first)
+          Worst {WORST_LIMIT} cells (thinnest first)
         </h2>
-        {worst.length === 0 ? (
-          <p className="text-sm text-slate-500">
-            Every cell is fully stocked at zero. Either the pool is unbuilt or
-            every question has been served at least once.
-          </p>
-        ) : (
-          <div className="overflow-hidden rounded-lg border border-slate-200">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                <tr>
-                  <th className="px-3 py-2 text-left">Section</th>
-                  <th className="px-3 py-2 text-left">Skill</th>
-                  <th className="px-3 py-2 text-left">Difficulty</th>
-                  <th className="px-3 py-2 text-right">Never-served</th>
-                </tr>
-              </thead>
-              <tbody>
-                {worst.map((c) => (
-                  <tr
-                    key={`${c.section}|${c.skill}|${c.difficulty}`}
-                    className="border-t border-slate-100"
+        <div className="overflow-hidden rounded-lg border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+              <tr>
+                <th className="px-3 py-2 text-left">Section</th>
+                <th className="px-3 py-2 text-left">Skill</th>
+                <th className="px-3 py-2 text-left">Difficulty</th>
+                <th className="px-3 py-2 text-right">Never-served</th>
+              </tr>
+            </thead>
+            <tbody>
+              {worst.map((c) => (
+                <tr
+                  key={`${c.section}|${c.skill}|${c.difficulty}`}
+                  className="border-t border-slate-100"
+                >
+                  <td className="px-3 py-2 text-slate-700">
+                    {SECTION_LABEL[c.section]}
+                  </td>
+                  <td className="px-3 py-2 text-slate-900">{c.skill}</td>
+                  <td className="px-3 py-2 text-slate-700">{c.difficulty}</td>
+                  <td
+                    className={`px-3 py-2 text-right font-mono tabular-nums font-semibold ${tone(c.neverServed, neverServedFloor)}`}
                   >
-                    <td className="px-3 py-2 text-slate-700">
-                      {SECTION_LABEL[c.section]}
-                    </td>
-                    <td className="px-3 py-2 text-slate-900">{c.skill}</td>
-                    <td className="px-3 py-2 text-slate-700">{c.difficulty}</td>
-                    <td
-                      className={`px-3 py-2 text-right font-mono tabular-nums font-semibold ${difficultyClass(c.neverServed, neverServedFloor)}`}
-                    >
-                      {c.neverServed}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                    {c.neverServed}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <p className="mt-1 text-xs text-slate-400">
-          Cells with a never-served count of zero are not listed; they show as
-          missing rows when fully exhausted.
+          Empty cells (zero never-served) are now included — these are what
+          the generator targets first on its next run.
         </p>
       </section>
     </main>
