@@ -220,9 +220,10 @@ export default async function AdminPoolPage() {
         </div>
         <p className="mt-1 text-xs text-slate-400">
           Each cell is the unseen count for the student with the FEWEST unseen
-          questions in that scope. "Worst" is the per-skill aggregate the gate
-          compares against the floor. {DIFFICULTIES.join(', ')} per skill so
-          you can see which difficulty cell the picker will target next.
+          questions in that scope. &ldquo;Worst&rdquo; is the per-skill
+          aggregate the gate compares against the floor.{' '}
+          {DIFFICULTIES.join(', ')} per skill so you can see which difficulty
+          cell the picker will target next.
         </p>
       </section>
     </main>
