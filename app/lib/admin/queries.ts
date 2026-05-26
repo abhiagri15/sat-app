@@ -73,29 +73,42 @@ export async function getQuestion(id: string): Promise<AdminQuestion | null> {
   return data as unknown as AdminQuestion;
 }
 
-// Same snapshot the question-generator uses to plan its next batches:
-// the worst-off student's unseen count, the configured floor, the buffer
-// target, and the per-(section, skill, difficulty) never-served counts.
+// Same snapshot the question-generator uses to plan its next batches: the
+// worst-off student's overall unseen count, the configured per-skill floor,
+// the buffer target, and per-skill / per-cell worstStudentUnseen counts
+// (the MIN across active students of that student's unseen count for the
+// scope). The floor compares against worstStudentUnseen, so the generator
+// replenishes a skill the moment ANY active student drops below floor for
+// that skill.
+//
 // Powered by sat.generator_state() — a single RPC keeps the admin view in
 // lockstep with what the n8n workflow sees on its next run.
 //
-// Cells with neverServed == 0 are NOT returned (the RPC groups by depth).
-// Consumers that need full coverage should treat missing cells as 0.
+// Skills/cells with no enabled questions don't appear in the arrays;
+// consumers cross-product against the canonical SKILLS list and default
+// missing entries to 0.
 //
 // Service-role client because generator_state() is security-definer and the
 // pool composition is admin-only; this also matches how the n8n side calls
 // it (via the service-role key). The page route is already requireAdmin()'d.
+export interface GeneratorStateSkill {
+  section: 'rw' | 'math';
+  skill: string;
+  worstStudentUnseen: number;
+}
+
 export interface GeneratorStateCell {
   section: 'rw' | 'math';
   skill: string;
   difficulty: 'easy' | 'medium' | 'hard';
-  neverServed: number;
+  worstStudentUnseen: number;
 }
 
 export interface GeneratorState {
   minActiveUserUnseen: number | null;
   neverServedFloor: number;
   bufferTarget: number;
+  skills: GeneratorStateSkill[];
   cells: GeneratorStateCell[];
 }
 
@@ -108,6 +121,7 @@ export async function getGeneratorState(): Promise<GeneratorState> {
       minActiveUserUnseen: null,
       neverServedFloor: 5,
       bufferTarget: 100,
+      skills: [],
       cells: [],
     };
   }

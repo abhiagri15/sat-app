@@ -49,18 +49,32 @@ type Difficulty = 'easy' | 'medium' | 'hard';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'medium', 'hard'] as const;
 
 // Shape of the JSON returned by sat.generator_state() — the single source of
-// truth for both the n8n workflow and this cron. Cells with neverServed == 0
-// are NOT returned; treat missing cells as 0.
+// truth for both the n8n workflow and this cron.
+//
+// worstStudentUnseen is the MIN across active students of that student's
+// unseen-question count for the given scope (skill or cell). A "skill" worst
+// is min-of-sum, NOT sum-of-min — sat.generator_state() computes it inside
+// the SQL so we don't have to reconstruct it here.
+//
+// Skills/cells that have no enabled questions don't appear in the arrays;
+// consumers cross-product against the canonical SKILLS list and default
+// missing entries to 0 (the same student would have 0 unseen for them).
+interface GeneratorStateSkill {
+  section: 'rw' | 'math';
+  skill: string;
+  worstStudentUnseen: number;
+}
 interface GeneratorStateCell {
   section: 'rw' | 'math';
   skill: string;
   difficulty: Difficulty;
-  neverServed: number;
+  worstStudentUnseen: number;
 }
 interface GeneratorState {
   minActiveUserUnseen: number | null;
   neverServedFloor: number;
   bufferTarget: number;
+  skills: GeneratorStateSkill[];
   cells: GeneratorStateCell[];
 }
 
@@ -92,54 +106,68 @@ export async function runGeneration(): Promise<GenerationSummary> {
     return summary;
   }
 
-  // 2. Build a never-served map for both the floor gate and the picker.
-  //    Cells missing from the RPC default to 0 (no fresh questions).
-  const neverServed = new Map<string, number>();
-  for (const c of state.cells) {
-    neverServed.set(`${c.section}|${c.skill}|${c.difficulty}`, c.neverServed);
+  // 2. Lookup maps: worst student's unseen count per skill and per cell.
+  //    Skills/cells missing from the RPC default to 0 — that skill has no
+  //    enabled questions at all, so every student is at 0 for it.
+  const skillWorst = new Map<string, number>();
+  for (const s of state.skills) {
+    skillWorst.set(`${s.section}|${s.skill}`, s.worstStudentUnseen);
   }
+  const cellWorst = new Map<string, number>();
+  for (const c of state.cells) {
+    cellWorst.set(`${c.section}|${c.skill}|${c.difficulty}`, c.worstStudentUnseen);
+  }
+
+  // 3. Per-skill floor gate. Any skill where the worst-off student has fewer
+  //    unseen questions than the floor triggers replenishment for that skill.
   const belowFloor = (['rw', 'math'] as const).some((section) =>
-    SKILLS[section].some((skill) =>
-      DIFFICULTIES.some(
-        (diff) =>
-          (neverServed.get(`${section}|${skill}|${diff}`) ?? 0) <
-          state.neverServedFloor,
-      ),
+    SKILLS[section].some(
+      (skill) =>
+        (skillWorst.get(`${section}|${skill}`) ?? 0) < state.neverServedFloor,
     ),
   );
 
-  // 3. Dual gate: skip iff the per-user buffer is healthy AND every cell is
-  //    at or above the floor. Either condition failing keeps the run going.
+  // 4. Dual gate: skip iff the overall per-user buffer is healthy AND every
+  //    skill is at or above the floor for every active student. Either
+  //    condition failing keeps the run going.
   const bufferHealthy = state.minActiveUserUnseen >= state.bufferTarget;
   if (bufferHealthy && !belowFloor) {
     return summary;
   }
 
-  // 4. Pick the thinnest (section, skill, difficulty) triples by never-served
-  //    count — matches the n8n picker exactly.
-  const slots: {
+  // 5. Picker: pick the SKILL with the lowest worst-student-unseen. Within
+  //    that skill, target the DIFFICULTY cell where the worst-student-unseen
+  //    is lowest — that keeps each skill growing balanced across E/M/H so
+  //    the adaptive engine has stock at every level for the affected student.
+  const skills: { section: 'rw' | 'math'; skill: string; worst: number }[] = [];
+  for (const section of ['rw', 'math'] as const) {
+    for (const skill of SKILLS[section]) {
+      skills.push({
+        section,
+        skill,
+        worst: skillWorst.get(`${section}|${skill}`) ?? 0,
+      });
+    }
+  }
+  skills.sort((a, b) => a.worst - b.worst);
+  const targets: {
     section: 'rw' | 'math';
     skill: string;
     difficulty: Difficulty;
-    have: number;
-  }[] = [];
-  for (const section of ['rw', 'math'] as const) {
-    for (const skill of SKILLS[section]) {
-      for (const difficulty of DIFFICULTIES) {
-        slots.push({
-          section,
-          skill,
-          difficulty,
-          have: neverServed.get(`${section}|${skill}|${difficulty}`) ?? 0,
-        });
+  }[] = skills.slice(0, MAX_SKILLS_PER_RUN).map((s) => {
+    let bestDiff: Difficulty = 'easy';
+    let bestHave = cellWorst.get(`${s.section}|${s.skill}|easy`) ?? 0;
+    for (const diff of ['medium', 'hard'] as const) {
+      const have = cellWorst.get(`${s.section}|${s.skill}|${diff}`) ?? 0;
+      if (have < bestHave) {
+        bestHave = have;
+        bestDiff = diff;
       }
     }
-  }
-  const targets = slots
-    .sort((a, b) => a.have - b.have)
-    .slice(0, MAX_SKILLS_PER_RUN);
+    return { section: s.section, skill: s.skill, difficulty: bestDiff };
+  });
 
-  // 5. generate, gate, insert. SPR (math-only) is requested with a per-target
+  // 6. generate, gate, insert. SPR (math-only) is requested with a per-target
   //    coin-flip at SPR_PROBABILITY; mcq otherwise. R&W always mcq.
   const provider = getProvider();
   for (const t of targets) {
