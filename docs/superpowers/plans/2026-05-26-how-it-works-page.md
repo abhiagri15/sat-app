@@ -1146,9 +1146,9 @@ select jsonb_object_keys(sat.public_pool_stats()) order by 1;
 reset role;
 ```
 
-Expected keys (sorted): `asOf`, `easyCount`, `hardCount`, `lastRefreshed`, `mathCount`, `mediumCount`, `rwCount`, `skillCount`, `totalEnabled`.
+Expected keys (sorted): `asOf`, `cells`, `easyCount`, `hardCount`, `lastRefreshed`, `mathCount`, `mediumCount`, `rwCount`, `skillCount`, `totalEnabled`.
 
-Expected NOT present: `minActiveUserUnseen`, `worstStudentUnseen`, `cells`, `skills`, `neverServedFloor`.
+Expected NOT present: `minActiveUserUnseen`, `worstStudentUnseen`, `skills`, `neverServedFloor`. (`cells` IS present and contains the 2×3 cross-tab.)
 
 - [ ] **Step 6: Final push**
 
