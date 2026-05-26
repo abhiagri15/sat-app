@@ -1,3 +1,4 @@
+import { createAdminClient } from '@/app/lib/supabase/admin';
 import { createClient } from '@/app/lib/supabase/server';
 
 export interface AdminQuestion {
@@ -70,6 +71,48 @@ export async function getQuestion(id: string): Promise<AdminQuestion | null> {
   }
   if (!data) return null;
   return data as unknown as AdminQuestion;
+}
+
+// Same snapshot the question-generator uses to plan its next batches:
+// the worst-off student's unseen count, the configured floor, the buffer
+// target, and the per-(section, skill, difficulty) never-served counts.
+// Powered by sat.generator_state() — a single RPC keeps the admin view in
+// lockstep with what the n8n workflow sees on its next run.
+//
+// Cells with neverServed == 0 are NOT returned (the RPC groups by depth).
+// Consumers that need full coverage should treat missing cells as 0.
+//
+// Service-role client because generator_state() is security-definer and the
+// pool composition is admin-only; this also matches how the n8n side calls
+// it (via the service-role key). The page route is already requireAdmin()'d.
+export interface GeneratorStateCell {
+  section: 'rw' | 'math';
+  skill: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  neverServed: number;
+}
+
+export interface GeneratorState {
+  minActiveUserUnseen: number | null;
+  neverServedFloor: number;
+  bufferTarget: number;
+  cells: GeneratorStateCell[];
+}
+
+export async function getGeneratorState(): Promise<GeneratorState> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.schema('sat').rpc('generator_state');
+  if (error || !data) {
+    console.error('[getGeneratorState] failed:', error);
+    return {
+      minActiveUserUnseen: null,
+      neverServedFloor: 5,
+      bufferTarget: 100,
+      cells: [],
+    };
+  }
+  // The RPC returns jsonb already shaped like GeneratorState.
+  return data as unknown as GeneratorState;
 }
 
 // Pool-wide counts for the /admin header. The pool is small — count in JS.

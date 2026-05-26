@@ -19,6 +19,7 @@ interface Tab {
 const TABS: Tab[] = [
   { label: 'Overview', href: '/admin', exact: true },
   { label: 'Question Pool', href: '/admin/questions' },
+  { label: 'Pool Health', href: '/admin/pool' },
   { label: 'Users', href: '/admin/users' },
   { label: 'Open Flags', href: '/admin/flags' },
   { label: 'Settings', href: '/admin/settings' },

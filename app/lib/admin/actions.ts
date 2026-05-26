@@ -101,6 +101,31 @@ export async function resolveFlag(flagId: string): Promise<void> {
   revalidatePath('/admin');
 }
 
+// Update the per-(section, skill, difficulty) never-served floor that drives
+// question replenishment. Admin-only; writes via the service-role client
+// (app_config has no write policy). Both the n8n workflow (via the
+// sat.generator_state() RPC) and the Vercel cron (via getNeverServedFloor)
+// read this value on their next run.
+export async function setNeverServedFloor(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const floor = Number(formData.get('floor'));
+  if (!Number.isInteger(floor) || floor < 1 || floor > 100) {
+    throw new Error('Floor must be a whole number between 1 and 100.');
+  }
+  const admin = createAdminClient();
+  const { error } = await admin
+    .schema('sat')
+    .from('app_config')
+    .update({ never_served_floor: floor, updated_at: new Date().toISOString() })
+    .eq('id', 1);
+  if (error) {
+    console.error('[setNeverServedFloor] failed:', error);
+    throw new Error('Failed to update the floor.');
+  }
+  revalidatePath('/admin/pool');
+  revalidatePath('/admin');
+}
+
 // Update the app-wide daily test-attempt limit (sat.app_config). Admin-only;
 // writes via the service-role client (app_config has no write policy).
 export async function setDailyAttemptLimit(formData: FormData): Promise<void> {

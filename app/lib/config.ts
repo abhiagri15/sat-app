@@ -2,6 +2,11 @@ import { createClient } from '@/app/lib/supabase/server';
 
 const DEFAULT_DAILY_ATTEMPT_LIMIT = 5;
 const DEFAULT_MODULE2_THRESHOLD_PCT = 60;
+// Default minimum count of never-served (globally fresh) questions per
+// (section, skill, difficulty) cell. The question-generator (both the n8n
+// workflow and the Vercel cron) fires whenever any cell drops below this
+// floor. Admins can override it from /admin/pool.
+const DEFAULT_NEVER_SERVED_FLOOR = 5;
 
 // The app-wide daily test-attempt limit per user (from sat.app_config).
 // Falls back to the default if the config row is unreadable.
@@ -95,6 +100,25 @@ export async function getModule2Thresholds(): Promise<{ rw: number; math: number
     math_module2_threshold_pct: number;
   };
   return { rw: row.rw_module2_threshold_pct, math: row.math_module2_threshold_pct };
+}
+
+// Sub-project #11 follow-up (never-served floor admin control): minimum
+// never-served-question count per (section, skill, difficulty) cell that
+// the generator targets. The n8n workflow reads this through the
+// sat.generator_state() RPC; the Vercel cron reads it via this function.
+export async function getNeverServedFloor(): Promise<number> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .schema('sat')
+    .from('app_config')
+    .select('never_served_floor')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error || !data) {
+    console.error('[getNeverServedFloor] failed:', error);
+    return DEFAULT_NEVER_SERVED_FLOOR;
+  }
+  return (data as { never_served_floor: number }).never_served_floor;
 }
 
 // Sub-project #11 follow-up: per-user "hide path while testing" preference.
