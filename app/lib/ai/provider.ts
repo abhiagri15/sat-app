@@ -37,6 +37,21 @@ export interface AIProvider {
   // Returns the list of 0-based indices the model judges valid (typically
   // length 1; length > 1 means the candidate is faulty).
   findValidChoices(q: Extract<SolveInput, { responseFormat: 'mcq' }>): Promise<number[]>;
+  // Repair attempt for a candidate that failed the multi-validity check:
+  // the intended answer is at `answerIndex`; the indices in `indicesToReplace`
+  // are also valid and need to become plausible-but-wrong distractors.
+  // Returns a new 4-element choice array on success, or null if the LLM
+  // can't produce a clean replacement. The caller re-runs findValidChoices
+  // on the repaired array — only accepts the candidate if the repair holds.
+  repairMultiValid(input: {
+    section: 'rw' | 'math';
+    skill: string;
+    passage: string | null | undefined;
+    prompt: string;
+    choices: string[];
+    answerIndex: number;
+    indicesToReplace: number[];
+  }): Promise<{ choices: string[] } | null>;
 }
 
 // Provider factory — keyed on SAT_AI_PROVIDER so other providers can be added later.

@@ -53,6 +53,10 @@ export interface GenerationSummary {
   // found more than one valid choice (e.g. a quadratic with both roots in
   // the choice list — see the flagged question from 2026-05-25).
   rejectedMultiValid: number;
+  // Multi-valid candidates that were repaired (extra valid choices rewritten
+  // as plausible distractors) and accepted on re-validation. Counts only
+  // saves — failed repairs increment rejectedMultiValid instead.
+  repairedMultiValid: number;
 }
 
 interface QuestionRow {
@@ -77,6 +81,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
     rejectedSelfVerify: 0,
     rejectedDuplicate: 0,
     rejectedMultiValid: 0,
+    repairedMultiValid: 0,
   };
 
   // 1. Per-user gate (cheap RPC). The function returns the smallest unseen-
@@ -212,8 +217,9 @@ export async function runGeneration(): Promise<GenerationSummary> {
       // Multi-validity check (mcq only): the prior solve agreed on the
       // generator's claimed answer, but the choice list may still contain
       // a SECOND valid answer (e.g. a quadratic with both roots listed).
-      // Ask the model to evaluate every choice and reject if > 1 valid.
-      // SPR has no choices so this check is skipped.
+      // Ask the model to evaluate every choice and either repair-then-accept
+      // or reject. SPR has no choices so this is skipped.
+      let repairedChoices: string[] | null = null;
       if (q.responseFormat === 'mcq') {
         let validIndices: number[] = [];
         try {
@@ -230,11 +236,67 @@ export async function runGeneration(): Promise<GenerationSummary> {
           summary.rejectedMultiValid++;
           continue;
         }
-        if (validIndices.length !== 1 || validIndices[0] !== q.answerIndex) {
-          // Either > 1 valid (faulty choice list) or solver disagreed on
-          // the single valid index. Either way, drop the candidate.
-          summary.rejectedMultiValid++;
-          continue;
+        const okSingle =
+          validIndices.length === 1 && validIndices[0] === q.answerIndex;
+        if (!okSingle) {
+          // Try to repair before dropping. Repair is only meaningful when:
+          //   - the intended answer IS judged valid (model agrees with the
+          //     generator about which choice is correct), AND
+          //   - one or two OTHER choices are ALSO judged valid (the bug class
+          //     we're targeting), AND
+          //   - not ALL four are flagged valid (a hopeless case).
+          const canRepair =
+            validIndices.includes(q.answerIndex) &&
+            validIndices.length > 1 &&
+            validIndices.length < 4;
+          if (!canRepair) {
+            summary.rejectedMultiValid++;
+            continue;
+          }
+          const toReplace = validIndices.filter((i) => i !== q.answerIndex);
+          let repaired: { choices: string[] } | null = null;
+          try {
+            repaired = await provider.repairMultiValid({
+              section: q.section,
+              skill: q.skill,
+              passage: q.passage,
+              prompt: q.prompt,
+              choices: q.choices,
+              answerIndex: q.answerIndex,
+              indicesToReplace: toReplace,
+            });
+          } catch (e) {
+            console.error('[generate] repairMultiValid error', e);
+          }
+          if (repaired === null) {
+            summary.rejectedMultiValid++;
+            continue;
+          }
+          // Re-run findValidChoices on the repaired list. Only accept if
+          // exactly the intended answer is valid now.
+          let reValid: number[] = [];
+          try {
+            reValid = await provider.findValidChoices({
+              responseFormat: 'mcq',
+              section: q.section,
+              skill: q.skill,
+              passage: q.passage,
+              prompt: q.prompt,
+              choices: repaired.choices,
+            });
+          } catch (e) {
+            console.error('[generate] re-findValidChoices error', e);
+            summary.rejectedMultiValid++;
+            continue;
+          }
+          if (reValid.length !== 1 || reValid[0] !== q.answerIndex) {
+            // Repair didn't hold — drop.
+            summary.rejectedMultiValid++;
+            continue;
+          }
+          // Repair succeeded. Use the repaired choice list for the insert.
+          repairedChoices = repaired.choices;
+          summary.repairedMultiValid++;
         }
       }
 
@@ -267,14 +329,20 @@ export async function runGeneration(): Promise<GenerationSummary> {
             skill: q.skill,
             passage: q.passage ?? null,
             prompt: q.prompt,
-            choices: q.choices,
+            // If we repaired the choice list to remove an extra-valid
+            // choice, insert the repaired set. answerIndex is unchanged
+            // because the repair preserves the intended-answer slot.
+            choices: repairedChoices ?? q.choices,
             answer_index: q.answerIndex,
             explanation: q.explanation,
             source: 'ai',
             response_format: 'mcq',
             correct_answer: null,
             answer_tolerance: null,
-            dedup_hash: dedupHash(q.prompt, q.choices, q.passage),
+            // Dedup against the FINAL choice list — a repaired candidate
+            // hashes differently from the original buggy version, which is
+            // the right behavior (the bug version would've been rejected).
+            dedup_hash: dedupHash(q.prompt, repairedChoices ?? q.choices, q.passage),
             difficulty: q.difficulty,
             classified_at: nowIso,
           }

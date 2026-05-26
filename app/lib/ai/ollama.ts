@@ -236,4 +236,83 @@ export class OllamaCloudProvider implements AIProvider {
     }
     return arr;
   }
+
+  // Repair a multi-valid choice list by replacing the extra valid choices
+  // with plausible-but-incorrect distractors. The intended answer's text is
+  // preserved at its original index; only the indices in `indicesToReplace`
+  // are rewritten. Returns the new 4-element choices array, or null if the
+  // model couldn't produce a clean 4-string array.
+  async repairMultiValid(input: {
+    section: 'rw' | 'math';
+    skill: string;
+    passage: string | null | undefined;
+    prompt: string;
+    choices: string[];
+    answerIndex: number;
+    indicesToReplace: number[];
+  }): Promise<{ choices: string[] } | null> {
+    const correctText = input.choices[input.answerIndex];
+    const toReplaceList = input.indicesToReplace
+      .map((i) => `index ${i}: "${input.choices[i]}" (currently a valid answer, must be replaced)`)
+      .join('\n');
+    const choicesList = input.choices.map((c, i) => `${i}: ${c}`).join('\n');
+
+    const content = await chat(
+      `You are fixing a Digital SAT multiple-choice question whose choice list ` +
+        `accidentally contains MULTIPLE valid answers. The intended single correct ` +
+        `answer is at index ${input.answerIndex} (text: "${correctText}"). Replace ` +
+        `each of these extra valid choices with a plausible-but-INCORRECT ` +
+        `distractor:\n` +
+        `${toReplaceList}\n\n` +
+        `A good distractor is a value a student might compute via a common ` +
+        `error (sign flip, dropped term, miscalculated discriminant, off-by-one, ` +
+        `sign error inside a radical) but is NOT itself a valid solution to ` +
+        `the question. Be specific to the math involved.\n\n` +
+        `Rules:\n` +
+        `- The choice at index ${input.answerIndex} MUST be preserved EXACTLY: "${correctText}".\n` +
+        `- The other un-listed indices (not in the replace list) MUST be preserved EXACTLY too.\n` +
+        `- Only replace the choices at the listed indices.\n` +
+        `- The final 4 choices must be DISTINCT strings.\n` +
+        `- The replacement distractors must NOT themselves be valid solutions.\n` +
+        `- No multi-step changes — replacement values should look numerically close to the correct answer.\n\n` +
+        (input.passage ? `Passage: ${input.passage}\n\n` : '') +
+        `Question: ${input.prompt}\n\n` +
+        `Current choices:\n${choicesList}\n\n` +
+        `Respond with ONLY a JSON array of exactly 4 strings — the full new ` +
+        `choice list with replacements applied. No prose, no markdown.`,
+    );
+
+    // Tolerant extract: prefer fenced ```...``` then raw JSON array.
+    const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const raw = (fenced ? fenced[1] : content).trim();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Try to recover just the array if there's trailing prose.
+      const arrMatch = raw.match(/\[\s*"[\s\S]*?"\s*(?:,\s*"[\s\S]*?"\s*){3}\]/);
+      if (!arrMatch) return null;
+      try {
+        parsed = JSON.parse(arrMatch[0]);
+      } catch {
+        return null;
+      }
+    }
+    if (!Array.isArray(parsed) || parsed.length !== 4) return null;
+    if (!parsed.every((s) => typeof s === 'string' && s.length >= 1)) return null;
+    const newChoices = parsed as string[];
+
+    // Belt-and-suspenders: the correct choice must still be at its index,
+    // and the un-replaced indices must match originals byte-for-byte. If
+    // the model rearranged anything despite instructions, refuse the repair.
+    if (newChoices[input.answerIndex] !== correctText) return null;
+    for (let i = 0; i < 4; i++) {
+      if (input.indicesToReplace.includes(i)) continue;
+      if (newChoices[i] !== input.choices[i]) return null;
+    }
+    // Distinctness check.
+    if (new Set(newChoices).size !== 4) return null;
+
+    return { choices: newChoices };
+  }
 }
