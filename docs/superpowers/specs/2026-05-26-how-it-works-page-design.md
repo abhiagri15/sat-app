@@ -22,7 +22,7 @@ Add a public-facing explainer page at `/how-it-works` that:
 
 ## Audience
 
-Single page, two audiences. Content flows top-to-bottom from student-facing value ("what you get") into shared mechanics ("how it works") into parent-facing methodology ("how questions are made"). Anchor nav at the top lets parents jump straight to the methodology block.
+Single page, two audiences. Content flows top-to-bottom from student-facing value ("what you get") into shared mechanics ("how it works") into parent-facing methodology ("how questions are made"). A non-sticky anchor nav (just inline links to `#how-it-works`, `#methodology`, `#faq` at the top of the page) lets parents jump straight to the methodology block. Sticky-on-scroll behavior is explicitly deferred to a follow-up.
 
 ## Architecture
 
@@ -79,7 +79,7 @@ grant execute on function sat.public_pool_stats() to anon, authenticated, servic
 
 - New file: `app/lib/marketing/queries.ts`
 - Exports `PublicPoolStats` type and `getPublicPoolStats(): Promise<PublicPoolStats | null>`.
-- Calls the RPC via the **anon** Supabase client (not service-role) — this proves the access path works for unauthenticated visitors.
+- Calls the RPC via a **plain anon-key Supabase client** — `createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY)` with no cookie store. The existing `app/lib/supabase/server.ts` is cookie-bound for SSR auth flows; binding cookies on this page would force Next.js into dynamic rendering and defeat the ISR caching. The marketing page has no user session, so a cookie-less client is the right tool.
 - On any error, logs to `console.error` and returns `null`.
 
 ### Caching
@@ -133,6 +133,8 @@ Plain-language explanation, ~3 paragraphs plus a small horizontal flow diagram.
 - Names validation gates **without naming the underlying models**. ("Two independent models must agree on the answer.")
 - Acknowledges the flag flow: users can flag bad questions; admins review and disable.
 
+**Implementation note — verify the copy matches reality.** The "two independent models must agree" claim is true today: the generator pipeline runs Ollama Solve, and on disagreement runs Ollama Tiebreak with a third model, so a candidate only ships when at least two models agree on the answer. Before the page goes live, re-read the live workflow's Check Answer + Tiebreak Decide nodes to make sure the copy still describes what the system does. If the pipeline ever changes, update the copy or pull the claim.
+
 ### 6. Live pool composition
 
 - A 2×3 grid: rows R&W / Math, columns Easy / Medium / Hard, cell shows count.
@@ -155,6 +157,11 @@ Plain-language explanation, ~3 paragraphs plus a small horizontal flow diagram.
 
 - "Ready to practice?" → big "Start free" → `/register`.
 - Small print: "Already have an account? Sign in." → `/login`.
+
+### Marketing chrome (header + footer wrapping the page)
+
+- `MarketingHeader`: full-width white bar at the top of the page. Logo on the left (links to `/`), two buttons on the right — "Sign in" (text link, → `/login`) and "Try it free" (filled blue button, → `/register`). Single row, no nav menu in v1.
+- `MarketingFooter`: thin gray bar at the bottom. Three inline items: copyright line ("© 2026"), small "Back to top" anchor link, small "Sign in" text link. No social icons, no privacy/terms links in v1.
 
 ## Judgment calls (explicit decisions)
 
@@ -224,7 +231,7 @@ Light-touch, manual-first. No new automated test files.
 
 ## Migration sequencing
 
-1. Apply migration `<TS>_sat_public_pool_stats.sql` first (independent of UI work; safe even if no page exists yet).
+1. Apply migration `<TS>_sat_public_pool_stats.sql` first (independent of UI work; safe even if no page exists yet). Migrations live in-repo at `supabase/migrations/` AND are applied through the Supabase MCP `apply_migration` tool — both happen, the file is the source-of-truth checked into git, the MCP call is how it lands in the live database.
 2. Land the page + middleware changes in a single commit (they ship together).
 3. Land the login/register footer links in a follow-up commit (smallest blast radius).
 
