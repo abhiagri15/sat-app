@@ -103,6 +103,17 @@ export default function LoginPage() {
             See how it works
           </Link>
         </p>
+        <p className="mt-3 text-center text-xs text-slate-500">
+          Preparing for the ACT instead?{' '}
+          <a
+            href="https://act-app-ten.vercel.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:underline"
+          >
+            Try our ACT practice app
+          </a>
+        </p>
       </CardContent>
     </Card>
   );
