@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { getPoolCounts } from '@/app/lib/admin/queries';
-import { listUsersWithStats } from '@/app/lib/admin/users';
+import { getUsersStats } from '@/app/lib/admin/users';
 import { countOpenFlags } from '@/app/lib/admin/flags';
 import { getDailyAttemptLimit } from '@/app/lib/config';
 
@@ -39,15 +39,12 @@ function Card({ title, href, description, stats }: CardProps) {
 }
 
 export default async function AdminOverviewPage() {
-  const [counts, users, openFlags, dailyLimit] = await Promise.all([
+  const [counts, userStats, openFlags, dailyLimit] = await Promise.all([
     getPoolCounts(),
-    listUsersWithStats(),
+    getUsersStats(),
     countOpenFlags(),
     getDailyAttemptLimit(),
   ]);
-
-  const studentCount = users.filter((u) => u.role === 'student').length;
-  const activeUsers = users.filter((u) => u.tests_taken > 0).length;
 
   return (
     <main className="mx-auto max-w-3xl p-6">
@@ -73,9 +70,9 @@ export default async function AdminOverviewPage() {
           href="/admin/users"
           description="See student activity and per-user analytics."
           stats={[
-            { label: 'Total users', value: users.length },
-            { label: 'Students', value: studentCount },
-            { label: 'Active (1+ test)', value: activeUsers },
+            { label: 'Total users', value: userStats.total },
+            { label: 'Students', value: userStats.students },
+            { label: 'Active (30d)', value: userStats.active },
           ]}
         />
         <Card
