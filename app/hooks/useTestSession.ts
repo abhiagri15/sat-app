@@ -60,7 +60,7 @@ export interface TestSession {
 export function useTestSession(initialName = ''): TestSession {
   const [screen, setScreen] = useState<Screen>('start');
   const [name, setName] = useState(initialName);
-  const [testLength, setTestLength] = useState<TestLength>('short');
+  const [testLength, setTestLength] = useState<TestLength>('full');
 
   const [test, setTest] = useState<Test | null>(null);
   const [secIdx, setSecIdx] = useState(0);
