@@ -100,6 +100,7 @@ export default function SatPractice({
         showReview={s.showReview}
         onToggleReview={s.toggleReview}
         onNewTest={s.newTest}
+        breaksUsed={s.breaksUsed}
       />
     );
   }

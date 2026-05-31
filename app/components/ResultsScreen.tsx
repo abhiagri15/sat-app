@@ -18,11 +18,12 @@ interface ResultsScreenProps {
   showReview: boolean;
   onToggleReview: () => void;
   onNewTest: () => void;
+  breaksUsed: boolean;
 }
 
 export function ResultsScreen({
   test, responses, results, saveStatus, saveError, onRetrySave,
-  showReview, onToggleReview, onNewTest,
+  showReview, onToggleReview, onNewTest, breaksUsed,
 }: ResultsScreenProps) {
   const { perSection, pct, scaled } = results;
   const isShort = test.length === 'short';
@@ -33,6 +34,11 @@ export function ResultsScreen({
           <span className="inline-block rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 mb-3">
             {test.name}
           </span>
+          {breaksUsed && (
+            <span className="ml-2 inline-block rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+              Taken with breaks
+            </span>
+          )}
           <h1 className="text-3xl font-semibold mb-1.5">Your results</h1>
           <div className="text-center py-2 pb-4">
             <div className="text-6xl font-extrabold text-blue-600 leading-none">
