@@ -13,13 +13,16 @@ interface ResultsScreenProps {
   responses: ResponseValue[][][];
   results: Results;
   saveStatus: SaveStatus;
+  saveError: string | null;
+  onRetrySave: () => void;
   showReview: boolean;
   onToggleReview: () => void;
   onNewTest: () => void;
 }
 
 export function ResultsScreen({
-  test, responses, results, saveStatus, showReview, onToggleReview, onNewTest,
+  test, responses, results, saveStatus, saveError, onRetrySave,
+  showReview, onToggleReview, onNewTest,
 }: ResultsScreenProps) {
   const { perSection, pct, scaled } = results;
   const isShort = test.length === 'short';
@@ -79,9 +82,25 @@ export function ResultsScreen({
             <p className="text-sm text-emerald-700 mt-3">Saved to your dashboard ✓</p>
           )}
           {saveStatus === 'error' && (
-            <p className="text-sm text-red-700 mt-3">
-              Couldn’t save this attempt — your history may be incomplete.
-            </p>
+            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+              <p className="text-sm font-medium text-red-700">
+                Couldn’t save this attempt yet.
+              </p>
+              <p className="mt-1 text-sm text-red-700">
+                Your result is backed up on this device and will be saved
+                automatically next time you open the app. You can also retry now.
+              </p>
+              {saveError && (
+                <p className="mt-1 text-xs text-red-500">Details: {saveError}</p>
+              )}
+              <Button
+                variant="secondary"
+                onClick={onRetrySave}
+                className="mt-2"
+              >
+                Retry save
+              </Button>
+            </div>
           )}
           <p className="text-sm text-slate-500 mt-3">
             Scored using a College Board–published Digital SAT scoring curve.

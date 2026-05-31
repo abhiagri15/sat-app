@@ -24,15 +24,33 @@ export default function SatPractice({
     const usedToday = attemptsUsedToday + s.sessionCompletions;
     const attemptsRemaining = Math.max(0, dailyAttemptLimit - usedToday);
     return (
-      <StartScreen
-        testLength={s.testLength}
-        setTestLength={s.setTestLength}
-        onStart={s.start}
-        loading={s.loading}
-        dailyAttemptLimit={dailyAttemptLimit}
-        attemptsRemaining={attemptsRemaining}
-        hideModule2Path={hideModule2Path}
-      />
+      <>
+        {/* Recovery banner: a prior attempt was found backed up on this device
+            and is being resaved in the background. */}
+        {s.resaveStatus === 'saving' && (
+          <div className="mx-auto max-w-3xl px-4 pt-4">
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-sm text-amber-800">
+              Recovering an unsaved result from a previous session…
+            </p>
+          </div>
+        )}
+        {s.resaveStatus === 'saved' && (
+          <div className="mx-auto max-w-3xl px-4 pt-4">
+            <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-sm text-emerald-800">
+              Recovered an unsaved result and saved it to your dashboard ✓
+            </p>
+          </div>
+        )}
+        <StartScreen
+          testLength={s.testLength}
+          setTestLength={s.setTestLength}
+          onStart={s.start}
+          loading={s.loading}
+          dailyAttemptLimit={dailyAttemptLimit}
+          attemptsRemaining={attemptsRemaining}
+          hideModule2Path={hideModule2Path}
+        />
+      </>
     );
   }
 
@@ -71,6 +89,8 @@ export default function SatPractice({
         responses={s.responses}
         results={s.results}
         saveStatus={s.saveStatus}
+        saveError={s.saveError}
+        onRetrySave={s.retrySave}
         showReview={s.showReview}
         onToggleReview={s.toggleReview}
         onNewTest={s.newTest}

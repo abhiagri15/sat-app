@@ -13,9 +13,26 @@ import {
 import { drawShortTest, drawFullTestModule1, drawModule2 } from '@/app/lib/pool';
 import { SECTION_CONFIG } from '@/app/lib/questions';
 import { isSprCorrect } from '@/app/lib/spr';
-import { toAttemptPayload } from '@/app/lib/persistence/payload';
+import { toAttemptPayload, type AttemptPayload } from '@/app/lib/persistence/payload';
 import { saveAttempt } from '@/app/lib/persistence/actions';
+import { withRetry } from '@/app/lib/persistence/retry';
+import {
+  makePendingAttempt,
+  writePendingAttempt,
+  readPendingAttempt,
+  clearPendingAttempt,
+} from '@/app/lib/persistence/backup';
 import { getModule2ThresholdPct } from '@/app/lib/config-actions';
+
+// A v4-ish unique id for correlating a backup with its save_failures rows.
+// crypto.randomUUID needs a secure context; fall back for the rare case it's
+// missing so a finished test is never blocked from being saved.
+function newAttemptUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `att-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+}
 
 export type Screen = 'start' | 'test' | 'results';
 
@@ -42,6 +59,15 @@ export interface TestSession {
   toggleReview: () => void;
   loading: boolean;
   saveStatus: SaveStatus;
+  // The real error message from the last failed save (RPC/network), surfaced
+  // so it can be shown/reported instead of being swallowed. null unless errored.
+  saveError: string | null;
+  // Re-runs the save from the in-memory payload after a failure. No-op if there
+  // is nothing pending.
+  retrySave: () => void;
+  // Background resave of a localStorage-backed attempt left over from a prior
+  // session (e.g. the tab closed before the save completed).
+  resaveStatus: SaveStatus;
   sessionCompletions: number; // tests submitted this browser session
   // actions
   start: () => void;
@@ -71,6 +97,14 @@ export function useTestSession(initialName = ''): TestSession {
   const [showReview, setShowReview] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [resaveStatus, setResaveStatus] = useState<SaveStatus>('idle');
+  // The payload + correlation id for the current results screen, kept so
+  // retrySave() can re-fire without recomputing from state.
+  const pendingPayloadRef = useRef<{ payload: AttemptPayload; attemptUuid: string } | null>(null);
+  // Guards the mount resave so React Strict Mode's double-invoke (dev) can't
+  // fire two concurrent resaves of the same backed-up attempt.
+  const resaveStartedRef = useRef(false);
   // Tests submitted this session — added to the server-rendered daily count so
   // the Start screen's limit gate stays accurate without a page reload.
   // Deliberately NOT reset by newTest(): it accumulates for the whole session.
@@ -112,25 +146,91 @@ export function useTestSession(initialName = ''): TestSession {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, secIdx, modIdx]);
 
+  // Runs the save through the retry policy. Retries transient failures (network
+  // blip, serverless cold-start, brief Supabase hiccup) with backoff; stops
+  // immediately on terminal failures (invalid payload, daily limit, no session).
+  // On success it clears the local backup; on final failure it keeps the backup
+  // and surfaces the real error string. Used by both the first save and retrySave.
+  const runSave = useCallback(
+    async (payload: AttemptPayload, attemptUuid: string): Promise<void> => {
+      setSaveStatus('saving');
+      setSaveError(null);
+      let attemptNo = 0;
+      const ua = typeof navigator !== 'undefined' ? navigator.userAgent : undefined;
+      const res = await withRetry<string>(() => {
+        attemptNo++;
+        return saveAttempt(payload, { attemptUuid, attemptNo, userAgent: ua }).then((r) =>
+          r.ok
+            ? { ok: true as const, value: r.id }
+            : { ok: false as const, error: r.error },
+        );
+      });
+      if (res.ok) {
+        clearPendingAttempt();
+        setSaveStatus('saved');
+        setSaveError(null);
+      } else {
+        // Backup is left in place so the attempt can be resaved on next load.
+        setSaveStatus('error');
+        setSaveError(res.error ?? 'unknown error');
+        console.error('[useTestSession] saveAttempt failed after retries:', res.error);
+      }
+    },
+    [],
+  );
+
   // Persist the attempt exactly once, when the results screen first appears.
+  // The savedRef guard prevents the auto-fire from running twice; retrySave()
+  // re-uses the captured payload to try again after a failure.
   useEffect(() => {
     if (screen !== 'results' || !test || !results || savedRef.current) return;
     savedRef.current = true;
     setSessionCompletions((n) => n + 1); // one submitted test, for the daily-limit gate
-    setSaveStatus('saving');
-    saveAttempt(toAttemptPayload(test, responses, results, testLength))
-      .then((res) => {
-        setSaveStatus(res.ok ? 'saved' : 'error');
-        if (!res.ok) console.error('[useTestSession] saveAttempt failed:', res.error);
-      })
-      .catch((e) => {
-        setSaveStatus('error');
-        console.error('[useTestSession] saveAttempt threw:', e);
-      });
+    const payload = toAttemptPayload(test, responses, results, testLength);
+    const attemptUuid = newAttemptUuid();
+    pendingPayloadRef.current = { payload, attemptUuid };
+    // Write the local backup BEFORE the network call so a tab close / reload
+    // mid-save still leaves a recoverable copy that auto-resaves next load.
+    writePendingAttempt(makePendingAttempt(payload, attemptUuid, Date.now()));
+    void runSave(payload, attemptUuid);
     // Deps are intentionally [screen] only: the savedRef guard ensures a single
     // run, so test/responses/results/testLength are read once on purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen]);
+
+  const retrySave = useCallback(() => {
+    const pend = pendingPayloadRef.current;
+    if (!pend) return;
+    void runSave(pend.payload, pend.attemptUuid);
+  }, [runSave]);
+
+  // On first mount, resave any attempt left behind by a previous session (the
+  // tab closed before the save finished, or the save errored and the page was
+  // reloaded). Best-effort background recovery — runs once.
+  useEffect(() => {
+    if (resaveStartedRef.current) return;
+    const pend = readPendingAttempt();
+    if (!pend) return;
+    resaveStartedRef.current = true;
+    setResaveStatus('saving');
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : undefined;
+    void withRetry<string>(() =>
+      saveAttempt(pend.payload, { attemptUuid: pend.attemptUuid, userAgent: ua }).then((r) =>
+        r.ok ? { ok: true as const, value: r.id } : { ok: false as const, error: r.error },
+      ),
+    ).then((res) => {
+      if (res.ok) {
+        clearPendingAttempt();
+        setResaveStatus('saved');
+      } else {
+        // Leave the backup for another try; a terminal failure (e.g. the daily
+        // limit) just means it won't recover, which the banner reflects.
+        setResaveStatus('error');
+      }
+    });
+    // Run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-finalise the current module on time-up. For a full test the
   // submit flow handles the Module 1 → Module 2 transition; we reuse it
@@ -292,7 +392,9 @@ export function useTestSession(initialName = ''): TestSession {
   const newTest = () => {
     stopTimer();
     savedRef.current = false;
+    pendingPayloadRef.current = null;
     setSaveStatus('idle');
+    setSaveError(null);
     setScreen('start');
   };
 
@@ -303,7 +405,8 @@ export function useTestSession(initialName = ''): TestSession {
   return {
     screen, name, setName, testLength, setTestLength,
     test, secIdx, modIdx, qIdx, responses, remaining,
-    showReview, toggleReview, loading, saveStatus, sessionCompletions,
+    showReview, toggleReview, loading, saveStatus, saveError, retrySave,
+    resaveStatus, sessionCompletions,
     start, setAnswer, goToQuestion, submitModule, newTest, results,
   };
 }
