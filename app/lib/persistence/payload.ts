@@ -34,6 +34,7 @@ export interface AttemptPayload {
   totalCorrect: number;
   totalQuestions: number;
   scaledScore: number;
+  breaksUsed: boolean;   // informational — did the student pause during this attempt?
   sectionBreakdown: {
     name: string;
     sectionKey: SectionKey;
@@ -57,6 +58,7 @@ export function toAttemptPayload(
   responses: ResponseValue[][][],
   results: Results,
   testLength: TestLength,
+  breaksUsed: boolean,
 ): AttemptPayload {
   const attemptResponses: AttemptResponsePayload[] = [];
   for (let si = 0; si < test.sections.length; si++) {
@@ -110,6 +112,7 @@ export function toAttemptPayload(
     totalCorrect,
     totalQuestions,
     scaledScore: results.scaled,
+    breaksUsed,
     // Explicit map: pick only the fields the wire format needs. The
     // passthrough form (`results.perSection`) would also carry `scaled`
     // and `projectedRaw` — zod's default strip mode would drop them

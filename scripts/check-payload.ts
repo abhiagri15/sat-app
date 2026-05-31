@@ -28,7 +28,7 @@ const responses: ResponseValue[][][] = test.sections.map((sec, si) =>
 );
 
 const results = computeResults(test, responses);
-const payload = toAttemptPayload(test, responses, results, 'short');
+const payload = toAttemptPayload(test, responses, results, 'short', false);
 
 const totalQ = test.sections.reduce((n, s) => n + sectionQuestions(s).length, 0);
 assert(payload.responses.length === totalQ,
@@ -77,5 +77,11 @@ for (const entry of payload.sectionBreakdown) {
       `sectionBreakdown[${entry.sectionKey}].module2Path null/absent on short test`);
   }
 }
+
+// breaksUsed flows through (5th arg, required — no implicit default).
+const payloadNoBreaks = toAttemptPayload(test, responses, results, 'short', false);
+assert(payloadNoBreaks.breaksUsed === false, 'breaksUsed false when 5th arg is false');
+const payloadWithBreaks = toAttemptPayload(test, responses, results, 'short', true);
+assert(payloadWithBreaks.breaksUsed === true, 'breaksUsed true when 5th arg is true');
 
 console.log('\nALL CHECKS PASSED');
