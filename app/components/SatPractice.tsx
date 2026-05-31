@@ -49,6 +49,8 @@ export default function SatPractice({
           dailyAttemptLimit={dailyAttemptLimit}
           attemptsRemaining={attemptsRemaining}
           hideModule2Path={hideModule2Path}
+          breaksEnabled={s.breaksEnabled}
+          setBreaksEnabled={s.setBreaksEnabled}
         />
       </>
     );
@@ -77,6 +79,10 @@ export default function SatPractice({
         onNext={() => s.goToQuestion(Math.min(mod.questions.length - 1, s.qIdx + 1))}
         onSubmitModule={s.submitModule}
         hideModule2Path={hideModule2Path}
+        breaksEnabled={s.breaksEnabled}
+        paused={s.paused}
+        onPause={s.pause}
+        onResume={s.resume}
       />
     );
   }
