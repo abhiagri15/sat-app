@@ -1,7 +1,7 @@
 # SAT Full-Test Pause ("Allow breaks") — Design
 
 **Date:** 2026-05-31
-**Status:** Approved (pending spec review)
+**Status:** Pending spec review
 **Scope:** A single sub-project. Small, self-contained.
 
 ## Problem
@@ -73,10 +73,17 @@ building stamina and pacing is the point of a full-length practice test.
 
 ### `useTestSession` (hook) — state + timer
 New state, each scoped to the current test:
-- `breaksEnabled: boolean` — seeded from the start-screen toggle at `start()`, mirroring
-  how `testLength` is handled. Always `false` for short tests.
+- `breaksEnabled: boolean` — **hook-owned state with a `setBreaksEnabled` setter**, exactly
+  parallel to the existing `testLength` / `setTestLength` pair. The start-screen toggle
+  calls `setBreaksEnabled`. **`start()` keeps its current zero-argument signature** (it
+  reads `name` / `testLength` / `breaksEnabled` off hook state) — the existing
+  `onStart={s.start}` wiring and `StartScreen`'s zero-arg `onStart()` call are unchanged.
+  Inside `start()`, when `testLength === 'short'`, `breaksEnabled` is forced to `false`
+  before the test begins, so short tests can never be pausable regardless of toggle state.
 - `paused: boolean` — whether the test is currently paused.
 - `breaksUsed: boolean` — whether the student paused at least once during this attempt.
+  **Sticky invariant:** once `true` it stays `true` for the remainder of the attempt;
+  `resume()` does NOT clear it. It is reset to `false` only by `start()` and `newTest()`.
 
 Timer interaction:
 - The existing countdown effect (a `setInterval` keyed on `[screen, secIdx, modIdx]`
@@ -85,7 +92,10 @@ Timer interaction:
   is not started** (and any running one is cleared). Because `remaining[][]` is mutated
   **only** by that interval, suspending the interval freezes the clock with no separate
   elapsed-time accounting. On resume, the same effect re-creates the interval from the
-  preserved `remaining` value.
+  preserved `remaining` value. **`paused` must be added to the effect's dependency
+  array**, so its existing `return stopTimer` cleanup fires when `paused` flips to `true`
+  — therefore `pause()` must NOT call `stopTimer()` itself (redundant); it only flips
+  state.
 
 New actions exposed by the hook:
 - `pause(): void` — no-op unless `breaksEnabled && screen === 'test' && !paused`. Sets
@@ -119,22 +129,39 @@ Lifecycle:
   (pause button + overlay), following the existing prop-passing pattern.
 
 ### Persistence path (data)
-- **Migration:** `alter table sat.test_attempts add column if not exists breaks_used
-  boolean not null default false;`
-- **`AttemptPayload`** ([app/lib/persistence/payload.ts]) gains `breaksUsed: boolean`.
-- **`toAttemptPayload`** sets `breaksUsed` from a value passed in by the hook (alongside
-  the existing `testLength` argument). Short tests always pass `false`.
-- **zod schema** ([app/lib/persistence/schema.ts]): add `breaksUsed: z.boolean()`
-  (default/optional-safe so older payloads do not break validation).
-- **`saveAttempt`** ([app/lib/persistence/actions.ts]): include `breaksUsed` in the
-  `p_attempt` jsonb.
-- **`sat.save_attempt`** (migration, recreate): write `p_attempt ->> 'breaksUsed'` (cast
-  to boolean, default false) into `test_attempts.breaks_used`. **Preserve** the existing
+- **Migration** (`20260531020000_sat_attempt_breaks_used.sql`, timestamped to sort after
+  `20260531010000`): `alter table sat.test_attempts add column if not exists breaks_used
+  boolean not null default false;` **plus** a recreation of `sat.save_attempt` (see below).
+- **`AttemptPayload`** ([app/lib/persistence/payload.ts](Personal/satpracticereact/sat-app/app/lib/persistence/payload.ts))
+  gains a **required** `breaksUsed: boolean` field.
+- **`toAttemptPayload`** gains a **required 5th positional parameter** `breaksUsed: boolean`
+  (signature becomes `(test, responses, results, testLength, breaksUsed)`); it copies that
+  value onto the payload. The hook is the sole caller and passes its `breaksUsed` state.
+  No short-test special-casing is needed at this call site: `breaksUsed` can only become
+  `true` via `pause()`, which is gated on `breaksEnabled`, which `start()` forces to
+  `false` for short tests — so short tests already always yield `false`. Do **not** add a
+  redundant second guard.
+- **zod schema** ([app/lib/persistence/schema.ts](Personal/satpracticereact/sat-app/app/lib/persistence/schema.ts)):
+  add `breaksUsed: z.boolean().optional()` at the **wire-validation** layer (lenient for
+  backward compatibility of the wire shape — an older client omitting it must still
+  validate), mirroring the existing `.optional()` precedent for `moduleIndex` /
+  `module2Path`. Note the asymmetry is intentional: the in-memory `AttemptPayload` type
+  is strict (the hook always supplies the field), while the wire schema is lenient.
+- **`saveAttempt`** ([app/lib/persistence/actions.ts](Personal/satpracticereact/sat-app/app/lib/persistence/actions.ts)):
+  include `breaksUsed: p.breaksUsed ?? false` in the `p_attempt` jsonb sent to the RPC.
+- **`sat.save_attempt`** (recreated in the migration): write
+  `coalesce((p_attempt ->> 'breaksUsed')::boolean, false)` into `test_attempts.breaks_used`
+  as one extra column in the existing attempt `INSERT`. **Preserve verbatim** the
   idempotency short-circuit ordering and the `unique_violation` handler from migration
   `20260531010000`, and all current scoring/insert logic — this change only adds one
-  column write.
-- **Read path:** the dashboard list query and the attempt-detail query select
-  `breaks_used` so the tag can render.
+  column to the `INSERT` column list + values.
+- **Read path:** `listAttempts()` and `getAttempt(id)` in
+  [app/lib/persistence/queries.ts](Personal/satpracticereact/sat-app/app/lib/persistence/queries.ts)
+  add `breaks_used` to their `select` and to the returned row type, so the field reaches:
+  (1) the dashboard list rows, (2) the attempt-detail review page. For the **results
+  screen**, `breaksUsed` is threaded into `ResultsScreen`'s props directly from the hook
+  via `SatPractice` (it is not part of the `Results` object — add an explicit
+  `breaksUsed: boolean` prop, parallel to how `saveStatus` is passed).
 
 ## Data Flow
 
@@ -172,8 +199,9 @@ StartScreen toggle ─▶ useTestSession.breaksEnabled
 ## Testing
 
 - **`scripts/check-payload.ts`** (the project has no unit-test runner): extend to assert
-  `breaksUsed` flows through `toAttemptPayload` — `false` by default and `true` when
-  passed `true`; and that short tests always yield `false`.
+  `breaksUsed` flows through `toAttemptPayload` — `false` when the 5th arg is `false` and
+  `true` when it is `true` (the param is required, so there is no implicit default), and
+  that the existing short-test call yields `false`.
 - **Manual verification:** with breaks enabled, start a full test → Pause mid-module →
   confirm the clock is frozen and all content is hidden → Resume → confirm the clock
   continues from where it stopped → submit → confirm the saved attempt has
@@ -184,15 +212,25 @@ StartScreen toggle ─▶ useTestSession.breaksEnabled
 
 ## Files Touched (summary)
 
-- `supabase/migrations/<new>_sat_attempt_breaks_used.sql` (new) — column + `save_attempt`
-  recreation preserving idempotency.
-- `app/hooks/useTestSession.ts` — state, timer guard, `pause`/`resume`, lifecycle resets.
-- `app/components/StartScreen.tsx` — the toggle (full only).
-- `app/components/TestScreen.tsx` — Pause button + overlay mount.
-- `app/components/PausedOverlay.tsx` (new) — the overlay.
-- `app/components/SatPractice.tsx` — prop threading.
-- `app/components/ResultsScreen.tsx` — "with breaks" tag.
-- `app/lib/persistence/payload.ts`, `schema.ts`, `actions.ts` — `breaksUsed` wire field.
-- Dashboard list + attempt-detail queries/components — read + tag.
-- `scripts/check-payload.ts` — `breaksUsed` assertions.
-- `CLAUDE.md` — a short gotcha documenting the pause/timer-freeze + `breaks_used`.
+- `supabase/migrations/20260531020000_sat_attempt_breaks_used.sql` (new) — `breaks_used`
+  column + `save_attempt` recreation preserving the idempotency short-circuit + handler.
+- `app/hooks/useTestSession.ts` — `breaksEnabled`/`setBreaksEnabled`/`paused`/`breaksUsed`
+  state, `paused` in the timer guard + deps, `pause`/`resume`, lifecycle resets, the
+  `toAttemptPayload` 5th-arg call.
+- `app/components/StartScreen.tsx` — the "Allow breaks" toggle (rendered only when
+  `testLength === 'full'`), new `breaksEnabled`/`setBreaksEnabled` props.
+- `app/components/TestScreen.tsx` — Pause button (only when `breaksEnabled`) + `PausedOverlay` mount.
+- `app/components/PausedOverlay.tsx` (new) — full-screen overlay, single `onResume` prop.
+- `app/components/SatPractice.tsx` — thread `breaksEnabled`/`setBreaksEnabled` to
+  `StartScreen`, `breaksEnabled`/`paused`/`pause`/`resume` to `TestScreen`, `breaksUsed`
+  to `ResultsScreen`.
+- `app/components/ResultsScreen.tsx` — new `breaksUsed` prop + "taken with breaks" tag.
+- `app/lib/persistence/payload.ts` (`breaksUsed` field + 5th param), `schema.ts`
+  (`breaksUsed: z.boolean().optional()`), `actions.ts` (`p_attempt.breaksUsed`).
+- `app/lib/persistence/queries.ts` — `listAttempts()` / `getAttempt()` select + return
+  `breaks_used`; the dashboard list row component and attempt-detail review render the tag.
+- `scripts/check-payload.ts` — assert `breaksUsed` passes through (`true` when the 5th arg
+  is `true`, `false` when `false`).
+- `CLAUDE.md` — a short gotcha documenting the pause/timer-freeze mechanic and that
+  `breaks_used` is **informational only** — it must never be read by `sat.scale_section`
+  or any scoring path (consistent with the "scaled_score is server-trusted" discipline).
