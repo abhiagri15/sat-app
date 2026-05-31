@@ -45,6 +45,12 @@ export interface TestSession {
   setName: (s: string) => void;
   testLength: TestLength;
   setTestLength: (l: TestLength) => void;
+  breaksEnabled: boolean;
+  setBreaksEnabled: (b: boolean) => void;
+  paused: boolean;
+  pause: () => void;
+  resume: () => void;
+  breaksUsed: boolean;
   test: Test | null;
   secIdx: number;
   modIdx: number;
@@ -87,6 +93,9 @@ export function useTestSession(initialName = ''): TestSession {
   const [screen, setScreen] = useState<Screen>('start');
   const [name, setName] = useState(initialName);
   const [testLength, setTestLength] = useState<TestLength>('full');
+  const [breaksEnabled, setBreaksEnabled] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [breaksUsed, setBreaksUsed] = useState(false);
 
   const [test, setTest] = useState<Test | null>(null);
   const [secIdx, setSecIdx] = useState(0);
@@ -127,7 +136,7 @@ export function useTestSession(initialName = ''): TestSession {
 
   // Drive the countdown whenever we're on the test screen / change section / module.
   useEffect(() => {
-    if (screen !== 'test') return;
+    if (screen !== 'test' || paused) return;
     stopTimer();
     tickRef.current = setInterval(() => {
       setRemaining((prev) => {
@@ -144,7 +153,7 @@ export function useTestSession(initialName = ''): TestSession {
     }, 1000);
     return stopTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen, secIdx, modIdx]);
+  }, [screen, secIdx, modIdx, paused]);
 
   // Runs the save through the retry policy. Retries transient failures (network
   // blip, serverless cold-start, brief Supabase hiccup) with backoff; stops
@@ -186,7 +195,7 @@ export function useTestSession(initialName = ''): TestSession {
     if (screen !== 'results' || !test || !results || savedRef.current) return;
     savedRef.current = true;
     setSessionCompletions((n) => n + 1); // one submitted test, for the daily-limit gate
-    const payload = toAttemptPayload(test, responses, results, testLength);
+    const payload = toAttemptPayload(test, responses, results, testLength, breaksUsed);
     const attemptUuid = newAttemptUuid();
     pendingPayloadRef.current = { payload, attemptUuid };
     // Write the local backup BEFORE the network call so a tab close / reload
@@ -247,6 +256,16 @@ export function useTestSession(initialName = ''): TestSession {
     setScreen('results');
   };
 
+  const pause = useCallback(() => {
+    if (!breaksEnabled || screen !== 'test' || paused) return;
+    setBreaksUsed(true);
+    setPaused(true);
+  }, [breaksEnabled, screen, paused]);
+
+  const resume = useCallback(() => {
+    setPaused((p) => (p ? false : p));
+  }, []);
+
   const start = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
@@ -274,6 +293,9 @@ export function useTestSession(initialName = ''): TestSession {
     setModIdx(0);
     setQIdx(0);
     setShowReview(false);
+    setBreaksEnabled(testLength === 'short' ? false : breaksEnabled);
+    setPaused(false);
+    setBreaksUsed(false);
     setScreen('test');
   };
 
@@ -395,6 +417,8 @@ export function useTestSession(initialName = ''): TestSession {
     pendingPayloadRef.current = null;
     setSaveStatus('idle');
     setSaveError(null);
+    setPaused(false);
+    setBreaksUsed(false);
     setScreen('start');
   };
 
@@ -404,6 +428,7 @@ export function useTestSession(initialName = ''): TestSession {
 
   return {
     screen, name, setName, testLength, setTestLength,
+    breaksEnabled, setBreaksEnabled, paused, pause, resume, breaksUsed,
     test, secIdx, modIdx, qIdx, responses, remaining,
     showReview, toggleReview, loading, saveStatus, saveError, retrySave,
     resaveStatus, sessionCompletions,
