@@ -7,6 +7,7 @@ import { QuestionView } from './QuestionView';
 import { QuestionNavigator } from './QuestionNavigator';
 import { CalculatorPanel } from './CalculatorPanel';
 import { ReferencePanel } from './ReferencePanel';
+import { PausedOverlay } from './PausedOverlay';
 
 interface TestScreenProps {
   section: TestSection;
@@ -25,6 +26,10 @@ interface TestScreenProps {
   onNext: () => void;
   onSubmitModule: () => void;
   hideModule2Path?: boolean;
+  breaksEnabled?: boolean;
+  paused?: boolean;
+  onPause?: () => void;
+  onResume?: () => void;
 }
 
 export function TestScreen(props: TestScreenProps) {
@@ -32,6 +37,10 @@ export function TestScreen(props: TestScreenProps) {
     section, secIdx, modIdx, totalSections, qIdx, sectionResponses, remaining,
     studentName, testLength, onAnswer, onGoToQuestion, onPrev, onNext, onSubmitModule,
     hideModule2Path = false,
+    breaksEnabled = false,
+    paused = false,
+    onPause = () => {},
+    onResume = () => {},
   } = props;
   const mod = section.modules[modIdx];
   const question = mod.questions[qIdx];
@@ -73,6 +82,18 @@ export function TestScreen(props: TestScreenProps) {
                 Adaptive: {section.module2Path === 'harder' ? 'Harder' : 'Easier'}
               </span>
             )}
+          </div>
+        )}
+
+        {breaksEnabled && (
+          <div className="mb-3">
+            <button
+              type="button"
+              onClick={onPause}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:border-blue-500 hover:bg-blue-50"
+            >
+              ⏸ Pause
+            </button>
           </div>
         )}
 
@@ -122,6 +143,7 @@ export function TestScreen(props: TestScreenProps) {
 
       {isMath && calcOpen && <CalculatorPanel onClose={() => setCalcOpen(false)} />}
       {isMath && refOpen && <ReferencePanel onClose={() => setRefOpen(false)} />}
+      {paused && <PausedOverlay onResume={onResume} />}
     </>
   );
 }
