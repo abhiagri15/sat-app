@@ -20,10 +20,11 @@ export interface AttemptSummary {
   total_questions: number;
   scaled_score: number;
   section_breakdown: SectionBreakdownEntry[];
+  breaks_used: boolean;
 }
 
 const SUMMARY_COLUMNS =
-  'id, created_at, student_name, test_length, total_correct, total_questions, scaled_score, section_breakdown';
+  'id, created_at, student_name, test_length, total_correct, total_questions, scaled_score, section_breakdown, breaks_used';
 
 // The signed-in user's attempts, newest first. RLS scopes the rows to them.
 // The id tie-break keeps the order stable for attempts saved in the same ms.

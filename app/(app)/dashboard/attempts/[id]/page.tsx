@@ -22,9 +22,16 @@ export default async function AttemptReviewPage({
       </Link>
 
       <h1 className="mt-3 text-2xl font-bold">Attempt review</h1>
-      <div className="mt-1 text-sm text-slate-500">
-        {new Date(attempt.created_at).toLocaleString()} ·{' '}
-        {attempt.test_length === 'full' ? 'Full' : 'Short'} test
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+        <span>
+          {new Date(attempt.created_at).toLocaleString()} ·{' '}
+          {attempt.test_length === 'full' ? 'Full' : 'Short'} test
+        </span>
+        {attempt.breaks_used && (
+          <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+            With breaks
+          </span>
+        )}
       </div>
       <div className="mt-3 flex flex-wrap items-baseline gap-4">
         <div className="text-4xl font-extrabold text-blue-600">

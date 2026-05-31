@@ -51,6 +51,11 @@ export function AttemptCard({ attempt }: { attempt: AttemptSummary }) {
             Short
           </span>
         )}
+        {attempt.breaks_used && (
+          <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+            With breaks
+          </span>
+        )}
       </div>
     </Link>
   );
