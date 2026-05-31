@@ -23,6 +23,7 @@ export const attemptPayloadSchema = z.object({
   totalCorrect: z.number().int().min(0),
   totalQuestions: z.number().int().positive(),
   scaledScore: z.number().int().min(400).max(1600),
+  breaksUsed: z.boolean().optional(),   // wire-lenient for backward compat; in-memory type is strict
   sectionBreakdown: z
     .array(
       z.object({

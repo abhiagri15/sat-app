@@ -22,7 +22,7 @@ const responses: ResponseValue[][][] = test.sections.map((sec) =>
   sec.modules.map((mod) => mod.questions.map((q) => q.answerIndex)),
 );
 const results = computeResults(test, responses);
-const payload = toAttemptPayload(test, responses, results, 'short');
+const payload = toAttemptPayload(test, responses, results, 'short', false);
 
 // --- round-trip: serialize → deserialize is lossless -------------------------
 const pending = makePendingAttempt(payload, 'uuid-abc', 1717000000000);

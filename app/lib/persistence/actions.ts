@@ -77,6 +77,7 @@ export async function saveAttempt(
       totalQuestions: p.totalQuestions,
       scaledScore: p.scaledScore,
       sectionBreakdown: p.sectionBreakdown,
+      breaksUsed: p.breaksUsed ?? false,
       // Idempotency key: lets a lost-response resave (same uuid) be a no-op in
       // sat.save_attempt instead of creating a duplicate attempt. Omitted →
       // the RPC falls back to always-insert.
