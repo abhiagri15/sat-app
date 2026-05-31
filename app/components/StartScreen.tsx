@@ -15,6 +15,8 @@ interface StartScreenProps {
   dailyAttemptLimit: number;
   attemptsRemaining: number;
   hideModule2Path: boolean;
+  breaksEnabled?: boolean;
+  setBreaksEnabled?: (b: boolean) => void;
 }
 
 export function StartScreen({
@@ -25,6 +27,8 @@ export function StartScreen({
   dailyAttemptLimit,
   attemptsRemaining,
   hideModule2Path,
+  breaksEnabled = false,
+  setBreaksEnabled = () => {},
 }: StartScreenProps) {
   const limitReached = attemptsRemaining <= 0;
   return (
@@ -58,6 +62,21 @@ export function StartScreen({
               Full (27 + 22)
             </Button>
           </div>
+
+          {testLength === 'full' && (
+            <label className="mb-[18px] flex items-start gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={breaksEnabled}
+                onChange={(e) => setBreaksEnabled(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600"
+              />
+              <span>
+                Allow breaks — show a Pause button so you can stop the clock and take a
+                break. Leave unchecked for a strict, real-test timed run.
+              </span>
+            </label>
+          )}
 
           {limitReached ? (
             <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-4">
