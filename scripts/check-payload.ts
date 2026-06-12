@@ -2,6 +2,7 @@
 // Run: pnpm dlx tsx scripts/check-payload.ts
 import { buildTest, computeResults, sectionQuestions } from '../app/lib/test';
 import { toAttemptPayload } from '../app/lib/persistence/payload';
+import { attemptPayloadSchema } from '../app/lib/persistence/schema';
 import type { ResponseValue } from '../app/lib/test';
 
 function assert(cond: boolean, msg: string): void {
@@ -83,5 +84,37 @@ const payloadNoBreaks = toAttemptPayload(test, responses, results, 'short', fals
 assert(payloadNoBreaks.breaksUsed === false, 'breaksUsed false when 5th arg is false');
 const payloadWithBreaks = toAttemptPayload(test, responses, results, 'short', true);
 assert(payloadWithBreaks.breaksUsed === true, 'breaksUsed true when 5th arg is true');
+
+// --- SPR (grid-in) responses must pass wire validation ----------------------
+// Regression guard: grid-in questions carry choices: [] and SPR-only fields.
+// The wire schema must (1) accept empty choices and (2) preserve the SPR fields
+// (responseFormat/enteredValue/...) rather than strip them — otherwise the RPC
+// receives null and the whole attempt is rejected as invalid_payload.
+const sprPayload = toAttemptPayload(test, responses, results, 'short', false);
+sprPayload.responses[0] = {
+  ...sprPayload.responses[0],
+  choices: [],
+  answerIndex: 0,
+  chosenIndex: null,
+  responseFormat: 'spr',
+  enteredValue: '7',
+  correctAnswer: '7',
+  answerTolerance: null,
+};
+const sprParsed = attemptPayloadSchema.safeParse(sprPayload);
+assert(sprParsed.success, 'SPR response (empty choices) passes wire validation');
+if (sprParsed.success) {
+  const r0 = sprParsed.data.responses[0] as Record<string, unknown>;
+  assert(r0.responseFormat === 'spr', 'responseFormat preserved (not stripped by zod)');
+  assert(r0.enteredValue === '7', 'enteredValue preserved (not stripped by zod)');
+}
+
+// An mcq response must still REQUIRE non-empty choices (don't over-loosen).
+const mcqPayload = toAttemptPayload(test, responses, results, 'short', false);
+mcqPayload.responses[0] = { ...mcqPayload.responses[0], responseFormat: 'mcq', choices: [] };
+assert(
+  !attemptPayloadSchema.safeParse(mcqPayload).success,
+  'mcq response with empty choices is still rejected',
+);
 
 console.log('\nALL CHECKS PASSED');
