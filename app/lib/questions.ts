@@ -465,6 +465,102 @@ export const SKILLS: Record<SectionKey, string[]> = {
   ],
 };
 
+// ---- College Board Digital SAT content domains ----
+// Domain-weighted full-test assembly (app/lib/assembly.ts + app/lib/pool.ts)
+// draws each full test to the official domain blueprint. The skill->domain map
+// and the blueprint live ONLY here — the draw_questions RPC receives a plain
+// skill list (p_skills), so there is no SQL-side or n8n-side domain copy to
+// keep in sync.
+export const RW_DOMAINS = [
+  'Information and Ideas',
+  'Craft and Structure',
+  'Expression of Ideas',
+  'Standard English Conventions',
+] as const;
+export const MATH_DOMAINS = [
+  'Algebra',
+  'Advanced Math',
+  'Problem-Solving and Data Analysis',
+  'Geometry and Trigonometry',
+] as const;
+export type Domain = (typeof RW_DOMAINS)[number] | (typeof MATH_DOMAINS)[number];
+
+export const DOMAINS: Record<SectionKey, readonly Domain[]> = {
+  rw: RW_DOMAINS,
+  math: MATH_DOMAINS,
+};
+
+// Every skill in SKILLS maps to exactly one domain. (Verified exhaustive by
+// scripts/check-assembly.ts.)
+export const SKILL_DOMAIN: Record<string, Domain> = {
+  // R&W — Information and Ideas
+  'Central Ideas': 'Information and Ideas',
+  'Inferences': 'Information and Ideas',
+  'Command of Evidence': 'Information and Ideas',
+  'Command of Evidence (Quantitative)': 'Information and Ideas',
+  // R&W — Craft and Structure
+  'Words in Context': 'Craft and Structure',
+  'Text Structure and Purpose': 'Craft and Structure',
+  'Cross-Text Connections': 'Craft and Structure',
+  // R&W — Expression of Ideas
+  'Rhetorical Synthesis': 'Expression of Ideas',
+  'Transitions': 'Expression of Ideas',
+  // R&W — Standard English Conventions
+  'Boundaries (Modifiers)': 'Standard English Conventions',
+  'Boundaries (Punctuation)': 'Standard English Conventions',
+  'Form & Structure (Verbs)': 'Standard English Conventions',
+  'Subject-Verb Agreement': 'Standard English Conventions',
+  'Pronoun Agreement': 'Standard English Conventions',
+  // Math — Algebra
+  'Linear Equations': 'Algebra',
+  'Linear Functions': 'Algebra',
+  'Systems of Equations': 'Algebra',
+  'Inequalities': 'Algebra',
+  'Slope & Lines': 'Algebra',
+  // Math — Advanced Math
+  'Quadratics': 'Advanced Math',
+  'Exponents': 'Advanced Math',
+  'Exponential Growth': 'Advanced Math',
+  'Equivalent Expressions': 'Advanced Math',
+  'Functions': 'Advanced Math',
+  // Math — Problem-Solving and Data Analysis
+  'Percentages': 'Problem-Solving and Data Analysis',
+  'Ratios & Proportions': 'Problem-Solving and Data Analysis',
+  'Probability': 'Problem-Solving and Data Analysis',
+  'Statistics (Mean)': 'Problem-Solving and Data Analysis',
+  'Statistics (Spread)': 'Problem-Solving and Data Analysis',
+  'Scatterplots & Models': 'Problem-Solving and Data Analysis',
+  // Math — Geometry and Trigonometry
+  'Circles': 'Geometry and Trigonometry',
+  'Geometry (Area)': 'Geometry and Trigonometry',
+  'Geometry (Triangles)': 'Geometry and Trigonometry',
+  'Volume': 'Geometry and Trigonometry',
+  'Right Triangle Trigonometry': 'Geometry and Trigonometry',
+};
+
+// Official Digital SAT domain weights, as percent of the section (each section
+// sums to 100). Keyed per section; only that section's domains are present.
+export const DOMAIN_BLUEPRINT: Record<SectionKey, Partial<Record<Domain, number>>> = {
+  rw: {
+    'Information and Ideas': 26,
+    'Craft and Structure': 28,
+    'Expression of Ideas': 20,
+    'Standard English Conventions': 26,
+  },
+  math: {
+    'Algebra': 35,
+    'Advanced Math': 35,
+    'Problem-Solving and Data Analysis': 15,
+    'Geometry and Trigonometry': 15,
+  },
+};
+
+// The skills belonging to a domain (derived from SKILL_DOMAIN), used to build
+// the p_skills list passed to draw_questions.
+export function skillsInDomain(section: SectionKey, domain: Domain): string[] {
+  return SKILLS[section].filter((s) => SKILL_DOMAIN[s] === domain);
+}
+
 // Maps a sat.questions row (snake_case, choices as jsonb) to the Question type.
 // Reads response_format / correct_answer / answer_tolerance with safe defaults
 // so the function still works against rows from before the SPR migration ran.
