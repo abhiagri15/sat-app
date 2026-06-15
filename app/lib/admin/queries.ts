@@ -129,25 +129,18 @@ export async function getGeneratorState(): Promise<GeneratorState> {
   return data as unknown as GeneratorState;
 }
 
-// Pool-wide counts for the /admin header. The pool is small — count in JS.
+// Pool-wide counts for the /admin header. Backed by the sat.admin_pool_counts()
+// SQL aggregate (one round trip, exact at any pool size) — the same RPC pattern
+// the public /how-it-works page uses (sat.public_pool_stats), but admin-scoped
+// so it also carries total/disabled/ai/seed. The old version fetched every row
+// and tallied in JS, which PostgREST capped at `max-rows` (1000), silently
+// pinning Total at 1000 once the pool outgrew it.
 export async function getPoolCounts(): Promise<PoolCounts> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .schema('sat')
-    .from('questions')
-    .select('section, source, enabled');
+  const { data, error } = await supabase.schema('sat').rpc('admin_pool_counts');
   if (error || !data) {
     console.error('[getPoolCounts] failed:', error);
     return { total: 0, enabled: 0, disabled: 0, ai: 0, seed: 0, rw: 0, math: 0 };
   }
-  const rows = data as { section: string; source: string; enabled: boolean }[];
-  return {
-    total: rows.length,
-    enabled: rows.filter((r) => r.enabled).length,
-    disabled: rows.filter((r) => !r.enabled).length,
-    ai: rows.filter((r) => r.source === 'ai').length,
-    seed: rows.filter((r) => r.source === 'seed').length,
-    rw: rows.filter((r) => r.section === 'rw').length,
-    math: rows.filter((r) => r.section === 'math').length,
-  };
+  return data as unknown as PoolCounts;
 }
