@@ -30,6 +30,11 @@ async function chat(content: string): Promise<string> {
       model,
       messages: [{ role: 'user', content }],
       stream: false,
+      // Reasoning models burn completion budget on in-band planning before
+      // the JSON appears; the long figure prompt was getting truncated
+      // mid-thought under the provider default. Explicit headroom fixes the
+      // truncation; prompts that finish early are unaffected.
+      max_tokens: 8192,
     }),
   });
   if (!res.ok) {
@@ -68,25 +73,41 @@ const RW_AUTHENTICITY_RULES =
   '- For Pronoun Agreement, NEVER make the answer hinge on "their" vs "his or her" — singular "they" is accepted on the Digital SAT. Test genuine number agreement or ambiguous-reference errors instead.\n' +
   '- NEVER refer to "the underlined sentence", "the underlined portion", or any bold/highlighted text — the app renders no such markup. Quote the relevant text directly in the prompt instead.\n';
 
-// Sub-project #15 (figures): the exact figure-spec JSON shape, documented inline
-// for the generation prompt so the model emits a `figure` that `figureSchema`
-// accepts (it is the safety wall — a malformed figure rejects the whole
-// candidate). Bounds mirror app/lib/ai/figure-schema.ts EXACTLY. The model
-// never emits SVG/HTML — only one of these structured shapes; the app renders
-// it. The final rule is load-bearing: the prompt text must independently
-// restate every given value so the item is fully solvable from text alone (the
-// figure is an aid, not the sole data source, and FigureView renders nothing on
-// a degenerate spec).
-const FIGURE_INSTRUCTIONS =
-  `- FIGURE: include a "figure" field — a structured spec the app renders as a graph/table (you NEVER emit SVG, HTML, or an image; only this JSON object). It must be ONE of these exact shapes (all strings ≤ 80 chars, all numbers finite):\n` +
-  `    table:       {"kind":"table","columns":[2-5 strings],"rows":[1-8 arrays, each EXACTLY columns.length strings]}\n` +
-  `    bar-chart:   {"kind":"bar-chart","xLabel":str,"yLabel":str,"bars":[2-8 of {"label":str,"value":number}]}\n` +
-  `    line-graph:  {"kind":"line-graph","xLabel":str,"yLabel":str,"points":[2-12 of {"x":number,"y":number}]}\n` +
-  `    scatterplot: {"kind":"scatterplot","xLabel":str,"yLabel":str,"points":[4-20 of {"x":number,"y":number}],"trendLine":{"slope":number,"intercept":number} (OPTIONAL)}\n` +
-  `    triangle:    {"kind":"triangle","vertices":[3 label strings],"sides":{"ab":str,"bc":str,"ca":str} (OPTIONAL, any subset),"angles":{"a":str,"b":str,"c":str} (OPTIONAL, any subset),"rightAngleAt":"a"|"b"|"c" (OPTIONAL)} — side/angle labels are shown AS GIVEN text (e.g. "12", "30°"); do NOT rely on the app to solve the geometry.\n` +
-  `    circle:      {"kind":"circle","radiusLabel":str (OPTIONAL),"centerLabel":str (OPTIONAL),"sectorAngleDeg":number 0-360 (OPTIONAL)}\n` +
-  `- Pick the ONE figure kind that best fits the question. Do NOT invent other kinds or fields — extra/missing fields cause the whole question to be rejected.\n` +
-  `- CRITICAL: the "prompt" (and "passage" if present) MUST independently restate every key value the student needs. The figure is a VISUAL AID, not the sole data source — a student who cannot see the figure must still be able to answer from the text alone.\n`;
+// Sub-project #15 (figures). Lesson learned live: a multi-line pseudo-grammar
+// of all six figure kinds reliably sent the reasoning model into
+// analyze-the-instructions mode (it echoed the grammar instead of emitting
+// JSON — 6/6 failures). The fix is anchoring: each figure-suitable skill gets
+// ONE concrete example spec the model copies structurally ("same keys, your
+// numbers"), plus three short rules. figureSchema remains the safety wall — a
+// malformed figure still rejects the whole candidate, and the model never
+// emits SVG/HTML, only the structured spec.
+const FIGURE_EXAMPLE_BY_SKILL: Record<string, string> = {
+  'Scatterplots & Models':
+    `{"kind":"scatterplot","xLabel":"Study hours","yLabel":"Score","points":[{"x":1,"y":60},{"x":2,"y":68},{"x":3,"y":75},{"x":4,"y":80},{"x":5,"y":88}],"trendLine":{"slope":6.8,"intercept":54}}`,
+  'Statistics (Mean)':
+    `{"kind":"bar-chart","xLabel":"Class","yLabel":"Students","bars":[{"label":"A","value":24},{"label":"B","value":30},{"label":"C","value":21}]}`,
+  'Statistics (Spread)':
+    `{"kind":"bar-chart","xLabel":"Team","yLabel":"Points","bars":[{"label":"North","value":48},{"label":"South","value":52},{"label":"East","value":50},{"label":"West","value":41}]}`,
+  'Geometry (Area)':
+    `{"kind":"triangle","vertices":["A","B","C"],"sides":{"ab":"10","bc":"8"},"rightAngleAt":"b"}`,
+  'Geometry (Triangles)':
+    `{"kind":"triangle","vertices":["A","B","C"],"sides":{"ab":"6","bc":"8","ca":"10"},"rightAngleAt":"b"}`,
+  'Right Triangle Trigonometry':
+    `{"kind":"triangle","vertices":["A","B","C"],"sides":{"ab":"5","bc":"12","ca":"13"},"angles":{"b":"90°"},"rightAngleAt":"b"}`,
+  'Circles':
+    `{"kind":"circle","radiusLabel":"r = 6","centerLabel":"O"}`,
+  'Volume':
+    `{"kind":"table","columns":["Dimension","Value (cm)"],"rows":[["radius","3"],["height","10"]]}`,
+};
+
+function figureRules(exampleSpec: string): string {
+  return (
+    `- Also include a "figure" field on EVERY object: a JSON spec the app renders as the figure. COPY THE STRUCTURE of this example exactly — same "kind" and same keys, changing only the labels and numbers to match your question (all numbers finite, all strings under 80 characters):\n` +
+    `    ${exampleSpec}\n` +
+    `- The question's prompt text must restate every value shown in the figure (the figure is a visual aid, not the sole data source).\n` +
+    `- Reply with ONLY the JSON array — your reply's first character must be "[".\n`
+  );
+}
 
 // Tolerantly extract a JSON value from a model response (strips ``` fences).
 // Exported for the check-figures assertion battery.
@@ -106,22 +127,55 @@ export function extractJson(text: string): unknown {
   try {
     return JSON.parse(raw);
   } catch {
+    // Reasoning-model outputs can interleave SEVERAL complete JSON values with
+    // leaked thinking (and a truncated re-emission at the end), so a naive
+    // first-bracket-to-last-bracket slice spans across candidates and parses
+    // garbage. Scan with bracket balancing (string/escape-aware) and return
+    // the FIRST complete value that parses — arrays first (batch outputs),
+    // then objects (lesson/guidance/explain outputs).
     for (const [open, close] of [
       ['[', ']'],
       ['{', '}'],
     ] as const) {
-      const start = raw.indexOf(open);
-      const end = raw.lastIndexOf(close);
-      if (start !== -1 && end > start) {
-        try {
-          return JSON.parse(raw.slice(start, end + 1));
-        } catch {
-          // fall through to the next shape / the error below
-        }
-      }
+      const found = firstBalancedJson(raw, open, close);
+      if (found !== undefined) return found;
     }
     throw new Error(`extractJson: invalid JSON from model: ${raw.slice(0, 120)}`);
   }
+}
+
+// Finds the first balanced open...close span in raw that parses as JSON.
+// Tracks string literals and escapes so brackets inside strings don't count.
+function firstBalancedJson(raw: string, open: string, close: string): unknown {
+  let start = raw.indexOf(open);
+  while (start !== -1) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < raw.length; i++) {
+      const ch = raw[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+      } else if (ch === '"') {
+        inString = true;
+      } else if (ch === open) {
+        depth += 1;
+      } else if (ch === close) {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            return JSON.parse(raw.slice(start, i + 1));
+          } catch {
+            break; // malformed span — try the next opener
+          }
+        }
+      }
+    }
+    start = raw.indexOf(open, start + 1);
+  }
+  return undefined;
 }
 
 export class OllamaCloudProvider implements AIProvider {
@@ -157,11 +211,13 @@ export class OllamaCloudProvider implements AIProvider {
     wantFigure = false,
   ): Promise<GeneratedQuestion[]> {
     const sectionName = section === 'rw' ? 'Reading & Writing' : 'Math';
-    // Figure example (math-only). The prompt still restates the values so the
-    // item is solvable from text alone — modeling the "figure is an aid" rule.
-    const figureExample = wantFigure
-      ? `,"figure":{"kind":"scatterplot","xLabel":"Study hours","yLabel":"Score","points":[{"x":1,"y":60},{"x":2,"y":68},{"x":3,"y":75},{"x":4,"y":80},{"x":5,"y":88}],"trendLine":{"slope":6.8,"intercept":54}}`
-      : '';
+    // Skill-anchored figure example (math-only) — the model copies this
+    // structure; figureRules() explains how. The prompt still restates the
+    // values so the item is solvable from text alone.
+    const figureSpec = wantFigure
+      ? FIGURE_EXAMPLE_BY_SKILL[skill] ?? FIGURE_EXAMPLE_BY_SKILL['Scatterplots & Models']
+      : null;
+    const figureExample = figureSpec ? `,"figure":${figureSpec}` : '';
     const example =
       section === 'rw'
         ? `{"responseFormat":"mcq","section":"rw","skill":"${skill}","difficulty":"${targetDifficulty}","passage":"Although critics initially called the design ______, recent reviews praise its bold use of color.",` +
@@ -194,7 +250,7 @@ export class OllamaCloudProvider implements AIProvider {
             RW_AUTHENTICITY_RULES +
             (RW_ARCHETYPES[skill] ? `- ${RW_ARCHETYPES[skill]}\n` : '')
           : `- Omit "passage" entirely unless the problem genuinely needs a setup.\n`) +
-        (wantFigure ? FIGURE_INSTRUCTIONS : '') +
+        (figureSpec ? figureRules(figureSpec) : '') +
         `Example of one valid array element:\n${example}`,
     );
     const parsed = extractJson(content);
@@ -221,11 +277,13 @@ export class OllamaCloudProvider implements AIProvider {
     targetDifficulty: 'easy' | 'medium' | 'hard',
     wantFigure = false,
   ): Promise<GeneratedQuestion[]> {
-    // Figure example (a table works well for a data-analysis grid-in). The
-    // prompt still restates the values so the item is solvable from text alone.
-    const figureExample = wantFigure
-      ? `,"figure":{"kind":"table","columns":["Day","Sales"],"rows":[["Mon","12"],["Tue","15"],["Wed","9"]]}`
-      : '';
+    // Skill-anchored figure example — same copy-this-structure approach as the
+    // mcq branch. The prompt still restates the values so the item is solvable
+    // from text alone.
+    const figureSpec = wantFigure
+      ? FIGURE_EXAMPLE_BY_SKILL[skill] ?? FIGURE_EXAMPLE_BY_SKILL['Scatterplots & Models']
+      : null;
+    const figureExample = figureSpec ? `,"figure":${figureSpec}` : '';
     const example =
       `{"responseFormat":"spr","section":"math","skill":"${skill}","difficulty":"${targetDifficulty}",` +
       `"prompt":"If 2x + 5 = 17, what is the value of x?",` +
@@ -252,7 +310,7 @@ export class OllamaCloudProvider implements AIProvider {
         `- "explanation" must be PLAIN TEXT (no HTML, no markdown). Show the steps that lead to ` +
         `"correctAnswer". Do not refer to multiple-choice options — SPR questions have none.\n` +
         `- Do NOT include "choices" or "answerIndex" fields. SPR questions have no choices.\n` +
-        (wantFigure ? FIGURE_INSTRUCTIONS : '') +
+        (figureSpec ? figureRules(figureSpec) : '') +
         `Example of one valid array element:\n${example}`,
     );
     const parsed = extractJson(content);

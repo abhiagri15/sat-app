@@ -181,5 +181,15 @@ assert(
   throws(() => extractJson('echoing {"broken": examples then nothing valid]')),
   'extractJson: unrecoverable bracket noise still throws',
 );
+assert(
+  JSON.stringify(extractJson('plan [1,2] more thoughts [3,4] truncated tail [5,')) === '[1,2]',
+  'extractJson: picks the FIRST complete value among interleaved candidates',
+);
+assert(
+  JSON.stringify(
+    extractJson('thinking...</think>[{"a":"has ] bracket in string"}]</think>[\n  {'),
+  ) === '[{"a":"has ] bracket in string"}]',
+  'extractJson: balanced scan is string-aware and survives a truncated re-emission',
+);
 
 console.log(`\ncheck-figures: ${count} assertions passed`);

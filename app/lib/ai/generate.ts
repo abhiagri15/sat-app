@@ -161,14 +161,26 @@ export async function generateBatchForSkill(
     section === 'math' &&
     FIGURE_SKILLS.has(skill) &&
     Math.random() < FIGURE_PROBABILITY;
+  // One retry on provider failure: reasoning models occasionally burn the
+  // whole completion on leaked thinking (no recoverable JSON — seen live on
+  // figure-bearing prompts), and a fresh sample usually lands. A second
+  // failure abandons the batch as before (the hourly/daily generators try
+  // again next tick).
   let candidates;
   try {
     candidates = await provider.generateQuestions(
       section, skill, count, useSpr, difficulty, wantFigure,
     );
-  } catch (e) {
-    console.error('[generate] provider error', section, skill, difficulty, e);
-    return summary;
+  } catch (firstError) {
+    console.error('[generate] provider error (retrying once)', section, skill, difficulty, firstError);
+    try {
+      candidates = await provider.generateQuestions(
+        section, skill, count, useSpr, difficulty, wantFigure,
+      );
+    } catch (e) {
+      console.error('[generate] provider error', section, skill, difficulty, e);
+      return summary;
+    }
   }
   for (const candidate of candidates) {
     summary.generated++;
