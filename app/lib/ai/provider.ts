@@ -29,12 +29,16 @@ export type SolveResult =
 // backing question row is gone (a response can outlive its question), in which
 // case the prompt omits the difficulty tag. `format` mirrors the question's
 // response format so the prompt can phrase mcq vs grid-in mistakes correctly.
+// `missReason` is the student's own tagged read of why they missed it (#18) —
+// null when untagged (or the row was correct); when present the prompt appends
+// "— student's own read: <phrase>" so the coach can weigh concept vs careless.
 export interface GuidanceEvidenceItem {
   prompt: string;
   chosen: string;
   correct: string;
   isCorrect: boolean;
   difficulty: string | null;
+  missReason: string | null;
   format: 'mcq' | 'spr';
 }
 

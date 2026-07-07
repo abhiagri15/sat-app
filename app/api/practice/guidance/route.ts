@@ -22,6 +22,7 @@ interface SkillEvidenceRow {
   is_correct: boolean;
   response_format: string;
   difficulty: string | null;
+  miss_reason: string | null;
   answered_at: string;
   origin: string;
 }
@@ -122,6 +123,7 @@ export async function POST(request: Request) {
       correct,
       isCorrect: r.is_correct,
       difficulty: r.difficulty, // passthrough (may be null)
+      missReason: r.miss_reason ?? null, // student's own read (#18); may be null
       format,
     };
   });

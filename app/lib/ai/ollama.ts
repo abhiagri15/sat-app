@@ -7,6 +7,14 @@ import type {
 } from './provider';
 import type { GeneratedQuestion } from './schema';
 import type { SectionKey } from '../questions';
+import { MISS_REASONS } from '../practice/miss-reasons';
+
+// value → prompt phrasing for the student's own read of a miss (#18). Built
+// once from the MISS_REASONS single-source const; an unknown value maps to
+// undefined and its evidence line simply omits the note.
+const MISS_REASON_PHRASE: Record<string, string> = Object.fromEntries(
+  MISS_REASONS.map((r) => [r.value, r.promptPhrase]),
+);
 
 const BASE_URL = process.env.OLLAMA_BASE_URL ?? 'https://ollama.com';
 
@@ -549,9 +557,13 @@ export class OllamaCloudProvider implements AIProvider {
         const excerpt = e.prompt.length > 200 ? `${e.prompt.slice(0, 200)}…` : e.prompt;
         const verdict = e.isCorrect ? 'CORRECT' : 'WRONG';
         const diff = e.difficulty ? ` [difficulty: ${e.difficulty}]` : '';
+        // The student's own tagged read of why they missed it (#18) — appended
+        // only when present and a known value; an unknown value is omitted.
+        const phrase = e.missReason ? MISS_REASON_PHRASE[e.missReason] : undefined;
+        const reason = phrase ? ` — student's own read: ${phrase}` : '';
         return (
           `${i + 1}. (${e.format}${diff}) Prompt: "${excerpt}" | ` +
-          `Student answered: "${e.chosen}" | Correct answer: "${e.correct}" | ${verdict}`
+          `Student answered: "${e.chosen}" | Correct answer: "${e.correct}" | ${verdict}${reason}`
         );
       })
       .join('\n');
