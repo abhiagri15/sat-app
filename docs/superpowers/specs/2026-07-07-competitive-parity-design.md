@@ -62,14 +62,20 @@ selection-range UI; the eliminator is the higher-value tool).
 
 ### A. Per-question timing
 
-- **Capture:** `useTestSession` and `usePracticeSession` accumulate visible
-  time per question (start/stop on question switch, pause — the existing
-  `paused` guard already freezes the only mutator — and check). Capped at
-  `TIME_MS_CAP = 600000` (10 min) per question to keep walked-away-from tabs
-  from poisoning averages. Milliseconds, integer.
-- **Wire:** `timeMs: number | null` added to both response payloads
-  (`toAttemptPayload`, `toPracticePayload`) and BOTH zod schemas (strip-mode
-  gotcha — list it or it silently vanishes).
+- **Capture (the real work — two different mechanisms):**
+  - `useTestSession`: NEW per-question accumulator state (a `timesMs`
+    structure parallel to the 3-D `responses` matrix, mutated via refs on
+    question switch / module submit; the existing `paused` guard freezes the
+    active stopwatch the same way it freezes the countdown).
+  - `usePracticeSession`: has NO timers today (untimed by design) — build a
+    fresh ref-based stopwatch: start on question display, stop at `check()`,
+    reset on `next()`. `DrillResult` gains `timeMs: number | null`.
+  - Both: capped at `TIME_MS_CAP = 600000` (10 min) per question so
+    walked-away tabs don't poison averages. Milliseconds, integer.
+- **Wire:** `timeMs: number | null` added to both response payloads —
+  `toAttemptPayload` gains a `timesMs` argument mirroring the responses
+  matrix; `toPracticePayload` reads `DrillResult.timeMs` — and BOTH zod
+  schemas (strip-mode gotcha — list it or it silently vanishes).
 - **DB:** `time_ms int null` on `sat.attempt_responses` and
   `sat.practice_responses`; `sat.save_attempt` and `sat.save_practice` read
   `r ->> 'timeMs'` with null coalescing (old clients send nothing → null).
@@ -79,10 +85,14 @@ selection-range UI; the eliminator is the higher-value tool).
   `time_ms` (non-null only), accuracy split fast-vs-slow not required in v1.
   `/analytics` gains a **Pacing** section: per-section average seconds per
   question vs the real-test budget (R&W ≈ 71 s, Math ≈ 95 s — derive from
-  `SECTION_CONFIG.secsPerQ` rather than hardcoding), plus the 5 slowest
-  skills with avg time and accuracy side by side ("slow but right" vs "slow
-  and wrong" reads directly off it). Drill summary recap and
+  `SECTION_CONFIG.secsPerQ` rather than hardcoding; NOTE: build AFTER the
+  Section-F timing fix so the budget reflects official numbers), plus the 5
+  slowest skills with avg time and accuracy side by side ("slow but right"
+  vs "slow and wrong" reads directly off it). Drill summary recap and
   `/dashboard/attempts/[id]` review show per-question times when present.
+  A separate `user_pacing()` RPC is chosen for clean separation of concerns
+  (pacing data is structurally different), not out of necessity —
+  `sat.user_analytics()` returns jsonb and could technically be extended.
 
 ### B. Figures in math
 
@@ -120,8 +130,12 @@ selection-range UI; the eliminator is the higher-value tool).
   `FIGURE_PROBABILITY = 0.5` coin flip asks for a figure-bearing item with
   the exact spec shape documented in the prompt; other skills never. The
   **self-verify solver receives a plain-text serialization** of the figure
-  (`describeFigure(figure)` — deterministic text) so verification still
-  works. `generateBatchForSkill` inserts `figure` when present. `p_figure`
+  (`describeFigure(figure)` — deterministic text). Sizing note: this is a
+  multi-method edit, not a prompt tweak — `SolveInput` (provider.ts), the
+  `solve` prompt builders (mcq + spr branches), and the multi-validity
+  `findValidChoices` / `repairMultiValid` paths ALL must carry the figure
+  text so every re-solve sees what the student sees.
+  `generateBatchForSkill` inserts `figure` when present. `p_figure`
   flows through `rowToQuestion` → `Question.figure?`.
 - **Draw/serve:** no draw changes — figure rides along on `sat.questions`
   rows (`draw_drill`/`draw_questions` return `SETOF sat.questions`, so the
@@ -209,11 +223,12 @@ selection-range UI; the eliminator is the higher-value tool).
   (practice pragmatism). Break time never touches section timers. The
   existing optional pause feature ("Allow breaks") is unchanged and
   orthogonal.
-- **Hide the routing label during full tests.** The "Adaptive:
-  Harder/Easier" chip in `TestScreen` is suppressed while a full test is in
-  progress regardless of the existing `hideModule2Path` preference (Bluebook
-  never shows it); the path remains visible on results/review surfaces,
-  where the preference keeps governing.
+- **Hide the routing label during full tests.** In `TestScreen`, the chip's
+  in-test render is currently gated by `!hideModule2Path` — the edit is to
+  REMOVE the chip from the in-test render entirely (drop the whole
+  conditional block), making it always-hidden during tests (Bluebook never
+  shows it); the path stays visible on results/review surfaces, where the
+  `hideModule2Path` preference keeps governing.
 - **Graphing calculator.** `CalculatorPanel` gains a Scientific ⇄ Graphing
   toggle (Desmos `/calculator?embed` vs `/scientific?embed` — the one-line
   swap CLAUDE.md already documents, now user-switchable). Resizable panel
@@ -229,8 +244,14 @@ selection-range UI; the eliminator is the higher-value tool).
 - **Exact-count guard.** After the Module-1 draw, each section must have
   exactly `moduleSize` questions or the full test aborts to the start-screen
   error (belt-and-suspenders — practically unreachable today, one `if`).
-  Module-2 draw failures mid-test retry once, then keep the existing
-  fallback behavior (aborting 32 minutes in is worse; documented residual).
+- **Module-2 mid-test failure (currently an UNHANDLED throw in
+  `submitModule` — there is no existing fallback there).** New behavior:
+  retry the `drawModule2` call once automatically; on a second failure show
+  an in-test error overlay ("Connection problem building Module 2 — Retry")
+  with a manual retry button. Timers for the new module have not started;
+  the student's Module-1 work is preserved in memory; no BANK fill, no
+  partial scaled score. Abandoning the tab loses the attempt (unchanged
+  from today's semantics).
 - **Estimated-score framing.** Results screen: label the number "Estimated
   score", add a ± band line ("typically within ±30 per section of a real
   administration"), and show `CURVE_VERSION` in the footnote. Same framing
@@ -253,7 +274,7 @@ honest).
 - `/api/practice/explain` stays out of `PUBLIC_PATHS`; server re-reads the
   question by id; student answers treated as quoted data in prompts.
 - `timeMs` is client-reported and **display/analytics-only** — it must never
-  feed scoring or the daily-limit/scoring RPоднак paths (same posture as
+  feed scoring or the daily-limit/scoring RPC paths (same posture as
   `breaks_used`).
 - The only service-role import sites remain the documented 8 (routes use the
   generation/practice server modules; admin empirical stats go through the
