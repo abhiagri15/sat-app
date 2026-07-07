@@ -7,12 +7,20 @@ import {
   getPracticeSkillStats,
   getRecentDrills,
 } from '@/app/lib/practice/queries';
+import {
+  getSkillLessonRow,
+  getGuidance,
+  getGuidanceStaleness,
+} from '@/app/lib/practice/performance';
 import { slugToSkill, skillSlug } from '@/app/lib/practice/slug';
 import { masteryTier } from '@/app/lib/practice/mastery';
 import { getLesson } from '@/app/lib/lessons';
 import { MasteryChip } from '@/app/components/practice/MasteryChip';
 import { LessonView } from '@/app/components/practice/LessonView';
 import { SkillDrill } from '@/app/components/practice/SkillDrill';
+import { CoachUpdate } from '@/app/components/practice/CoachUpdate';
+import { GuidanceRefresher } from '@/app/components/practice/GuidanceRefresher';
+import { LessonGenerating } from '@/app/components/practice/LessonGenerating';
 
 // Short "Jul 5" style date for the recent-drills list + stat line.
 function shortDate(iso: string): string {
@@ -41,13 +49,23 @@ export default async function SkillPracticePage({
   const sp = await searchParams;
   const autoStart = sp.drill === '1';
 
-  const [{ skills }, practiceStats, recentDrills] = await Promise.all([
-    getAnalytics(),
-    getPracticeSkillStats(),
-    getRecentDrills(skill),
-  ]);
+  const [{ skills }, practiceStats, recentDrills, lessonRow, guidanceRow] =
+    await Promise.all([
+      getAnalytics(),
+      getPracticeSkillStats(),
+      getRecentDrills(skill),
+      getSkillLessonRow(skill),
+      getGuidance(skill),
+    ]);
 
-  const lesson = getLesson(skill);
+  // Staleness depends on the guidance row's watermark, so it runs after.
+  const staleness = await getGuidanceStaleness(
+    skill,
+    guidanceRow?.basedOnLatest ?? null,
+  );
+
+  // Static lesson is the fallback layer; the AI base lesson (if any) wins.
+  const staticLesson = getLesson(skill);
 
   // This skill's test stat (0/0 if never answered).
   const testStat = skills.find((s) => s.skill === skill);
@@ -101,7 +119,28 @@ export default async function SkillPracticePage({
         </p>
       </header>
 
+      {/* Coach block — per-student "Coach's update" (see spec §B/§E). */}
       <section className="mt-6">
+        {guidanceRow ? (
+          <>
+            <CoachUpdate
+              guidance={guidanceRow.guidance}
+              generatedAt={guidanceRow.generatedAt}
+            />
+            {staleness.stale && (
+              <GuidanceRefresher skill={skill} mode="refresh" />
+            )}
+          </>
+        ) : staleness.hasAnyResponse ? (
+          <GuidanceRefresher skill={skill} mode="initial" />
+        ) : (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            Complete a drill to unlock personalized coaching.
+          </div>
+        )}
+      </section>
+
+      <section className="mt-8">
         <SkillDrill
           section={section}
           skill={skill}
@@ -110,9 +149,19 @@ export default async function SkillPracticePage({
         />
       </section>
 
+      {/* Lesson block — AI base lesson (if any) wins; else static fallback with
+          a generating banner; else the defensive "coming soon" card. */}
       <section className="mt-8">
-        {lesson ? (
-          <LessonView lesson={lesson} />
+        {lessonRow ? (
+          <LessonView
+            lesson={lessonRow.lesson}
+            byline={`Lesson · updated ${shortDate(lessonRow.generatedAt)}`}
+          />
+        ) : staticLesson ? (
+          <>
+            <LessonGenerating skill={skill} />
+            <LessonView lesson={staticLesson} />
+          </>
         ) : (
           <div className="rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-600">
             Lesson coming soon for this skill. You can still practice above.

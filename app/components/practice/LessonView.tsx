@@ -1,14 +1,23 @@
 import type { Lesson } from '@/app/lib/lessons/types';
 
-// Renders one static lesson. Plain (server-renderable, no hooks). Every lesson
-// field is plain text data, so all content renders React-escaped — no
-// dangerouslySetInnerHTML anywhere here. The worked-example passage uses
-// whitespace-pre-line to preserve student-notes bullets (which contain \n).
-export function LessonView({ lesson }: { lesson: Lesson }) {
+// Renders one lesson (static fallback OR AI base — same Lesson shape). Plain
+// (server-renderable, no hooks). Every lesson field is plain text data, so all
+// content renders React-escaped — no dangerouslySetInnerHTML anywhere here. The
+// worked-example passage uses whitespace-pre-line to preserve student-notes
+// bullets (which contain \n). The optional neutral `byline` (e.g. "Lesson ·
+// updated <date>") renders small/slate under the tagline.
+export function LessonView({
+  lesson,
+  byline,
+}: {
+  lesson: Lesson;
+  byline?: string;
+}) {
   const ex = lesson.workedExample;
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-5 sm:p-6">
       <p className="text-lg font-semibold text-slate-900">{lesson.tagline}</p>
+      {byline && <p className="mt-1 text-xs text-slate-400">{byline}</p>}
 
       <div className="mt-4 space-y-3 text-sm leading-relaxed text-slate-700">
         {lesson.overview.map((para, i) => (

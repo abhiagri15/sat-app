@@ -86,12 +86,22 @@ export function usePracticeSession(
     if (res.ok) {
       setSaveStatus('saved');
       setSaveError(null);
+      // Fire-and-forget post-drill targeted top-up (see the Dynamic Practice
+      // spec §C). Not awaited, no state — the drill already completed; the
+      // route enforces its own threshold + cooldown. keepalive lets it survive
+      // a navigation away from the summary. Failures are silently ignored.
+      fetch('/api/practice/topup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ skill }),
+        keepalive: true,
+      }).catch(() => {});
     } else {
       setSaveStatus('error');
       setSaveError(res.error ?? 'unknown error');
       console.error('[usePracticeSession] savePractice failed:', res.error);
     }
-  }, []);
+  }, [skill]);
 
   const start = useCallback(async () => {
     setPhase('loading');
