@@ -4,6 +4,7 @@ import { focusAreas } from '@/app/lib/analytics/compute';
 import { getPracticeSkillStats } from '@/app/lib/practice/queries';
 import { FocusAreaCard } from '@/app/components/practice/FocusAreaCard';
 import { SkillCatalog } from '@/app/components/practice/SkillCatalog';
+import { DoThisNextCard } from '@/app/components/planner/DoThisNextCard';
 
 // The Practice hub. Turns analytics focus areas into targeted skill practice.
 // Focus areas are the top-3 weakest tested skills; below them, the full skill
@@ -29,6 +30,10 @@ export default async function PracticePage() {
         Targeted, untimed drills with instant feedback — start with your weakest
         skills.
       </p>
+
+      {/* "Do this next" — the top not-done plan item (renders nothing if there's
+          no plan / no actionable item). Above focus areas. */}
+      <DoThisNextCard />
 
       {focus.length > 0 ? (
         <section className="mt-8">

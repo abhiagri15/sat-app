@@ -26,6 +26,12 @@ export async function AppHeader() {
           Practice
         </Link>
         <Link
+          href="/plan"
+          className="text-sm text-slate-500 transition-colors hover:text-slate-900"
+        >
+          Plan
+        </Link>
+        <Link
           href="/analytics"
           className="text-sm text-slate-500 transition-colors hover:text-slate-900"
         >

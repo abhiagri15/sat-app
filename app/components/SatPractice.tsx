@@ -11,11 +11,14 @@ export default function SatPractice({
   attemptsUsedToday,
   dailyAttemptLimit,
   hideModule2Path = false,
+  planLine = null,
 }: {
   studentName: string;
   attemptsUsedToday: number;
   dailyAttemptLimit: number;
   hideModule2Path?: boolean;
+  // Optional one-liner surfaced on the start screen when a study plan exists.
+  planLine?: string | null;
 }) {
   const s = useTestSession(studentName);
 
@@ -56,6 +59,7 @@ export default function SatPractice({
           pendingSnapshot={s.pendingSnapshot}
           onResumeSnapshot={s.resumeSnapshot}
           onDiscardSnapshot={s.discardSnapshot}
+          planLine={planLine}
         />
       </>
     );

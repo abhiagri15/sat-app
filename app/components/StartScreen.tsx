@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { fmtTime } from '@/app/lib/test';
 import type { TestLength } from '@/app/lib/test';
 import type { SnapshotSummary } from '@/app/hooks/useTestSession';
@@ -27,6 +28,9 @@ interface StartScreenProps {
   pendingSnapshot?: SnapshotSummary | null;
   onResumeSnapshot?: () => void;
   onDiscardSnapshot?: () => void;
+  // Optional one-liner shown when a study plan exists ("This week: X of Y plan
+  // items done"). Null hides it — kept to a single subtle line.
+  planLine?: string | null;
 }
 
 // Human "saved X ago" for the resume card, from a client-clock ms timestamp.
@@ -52,6 +56,7 @@ export function StartScreen({
   pendingSnapshot = null,
   onResumeSnapshot = () => {},
   onDiscardSnapshot = () => {},
+  planLine = null,
 }: StartScreenProps) {
   const limitReached = attemptsRemaining <= 0;
   return (
@@ -93,6 +98,15 @@ export function StartScreen({
             submit, and get an instant score with a worked explanation for every problem. Each new test
             pulls fresh, randomized questions.
           </p>
+
+          {planLine && (
+            <p className="mb-6 -mt-3 text-sm text-slate-500">
+              {planLine} —{' '}
+              <Link href="/plan" className="text-blue-600 hover:underline">
+                see your plan
+              </Link>
+            </p>
+          )}
 
           <Label className="block text-sm font-semibold">Test length</Label>
           <div className="flex flex-wrap gap-2.5 mt-2 mb-[18px]">
