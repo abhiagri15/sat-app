@@ -1,0 +1,19 @@
+# Mark for Review Implementation Plan
+
+> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Bluebook-style Mark for Review + Check Your Work page before module submit.
+
+**Spec (binding):** `docs/superpowers/specs/2026-07-07-mark-for-review-design.md`
+
+**Files:** Modify `app/hooks/useTestSession.ts`, `app/components/TestScreen.tsx`, `app/components/QuestionNavigator.tsx`, `app/components/QuestionView.tsx` (only if the last-question Next needs a new prop path), `CLAUDE.md`; Create `app/components/CheckYourWork.tsx`.
+
+## Task 1: The whole feature (single task — one implementer)
+
+- [ ] **Hook** (`useTestSession` — read it in FULL first; it carries the break phase, module-2 retry, stopwatch, and validity guards from #15; touch NOTHING in the timer/countdown/stopwatch/submit machinery): add `marked: Set<string>` (key `"${secIdx}-${modIdx}-${qIdx}"`), `toggleMarked()`, `moduleReview: boolean`, `openModuleReview()`, `closeModuleReview(qi?: number)`. Reset `marked` + `moduleReview` in `start()` and `newTest()`; ALSO close review on module/section advance (`submitModule` path already changes indices — ensure `moduleReview` is false after any advance so Module 2 starts on its first question, not a stale review page; same when entering the break). Expose all five on the returned interface. Do NOT call `submitModule` from anywhere new.
+- [ ] **TestScreen**: header row gains the "Mark for Review" bookmark toggle (filled amber when marked, `aria-pressed`; the term "flag" must not appear). When `moduleReview` is true render `<CheckYourWork>` INSTEAD of QuestionView + QuestionNavigator (TopBar with the timer stays). Pass `marked`/`onToggleMarked`/review handlers through. The Enter-key/global handlers, eliminator, calculator/reference panels, pause overlay, and module-2 error overlay must be untouched and must still work on the question view.
+- [ ] **QuestionNavigator**: marked squares get a small bookmark corner badge (absolute-positioned mini SVG/glyph, `aria-label` includes "marked for review"); the submit `Button` becomes label "Review & submit" and calls `onOpenReview` (new prop replacing the direct `onSubmitModule` — the component no longer submits directly).
+- [ ] **Last-question Next** opens review: in `TestScreen`, where QuestionView receives `onNext`, pass a wrapper: last question → `openModuleReview()`, else the normal `onNext`. (Check QuestionView's existing `isLast` prop handling — if it disables Next on last, un-disable and let the wrapper handle it.)
+- [ ] **CheckYourWork.tsx** (new, `'use client'`, presentational + callbacks): props `{ section, modIdx, sectionResponses, marked (module-scoped lookup fn or Set + keyPrefix), submitLabel, onJump(qi), onBack, onSubmit }`. Render per spec: heading, legend, grid (answered filled blue, unanswered hollow, marked = amber bookmark badge; both states can coexist), Back to question (secondary), submit (primary, `submitLabel` — reuse the exact label logic that lived in QuestionNavigator: lift that `submitLabel` computation to TestScreen and pass it to BOTH components... simpler: compute in TestScreen once, pass down). Keyboard accessible (real buttons).
+- [ ] **CLAUDE.md**: one gotcha bullet under the Parity section (or a tiny #16 section): marks are UI-only/never persisted; "Mark for Review" vs "flag" terminology rule; review page is the only submit path but `submitModule` semantics unchanged; timer runs during review.
+- [ ] Gates: `pnpm type-check`, `pnpm lint`, `pnpm build`. Commit: `git add -A -- app/hooks/useTestSession.ts app/components/TestScreen.tsx app/components/QuestionNavigator.tsx app/components/QuestionView.tsx app/components/CheckYourWork.tsx CLAUDE.md && git commit -m "feat(test): mark for review + check-your-work page before module submit"`. Do NOT push.
