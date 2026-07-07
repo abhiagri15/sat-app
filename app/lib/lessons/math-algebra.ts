@@ -58,7 +58,7 @@ export const MATH_ALGEBRA_LESSONS: Lesson[] = [
     strategies: [
       {
         title: 'Identify the constant vs. the rate',
-        body: 'Ask what you have before anything happens (the constant b) and what changes per unit (the rate m). A $3 base fare is b; a $2-per-mile charge is m, so total cost C = 2m + 3 for m miles.',
+        body: 'Ask what you have before anything happens (the constant b) and what changes per unit (the rate m). A $3 base fare is the constant and a $2-per-mile charge is the rate, so total cost C = 2d + 3 for d miles.',
       },
       {
         title: 'Match units to the variable',
