@@ -9,7 +9,7 @@ import { getProvider } from '@/app/lib/ai/provider';
 import type { ExplainInput, GuidanceInput } from '@/app/lib/ai/provider';
 import { lessonSchema } from '@/app/lib/ai/lesson-schema';
 import { guidanceSchema } from '@/app/lib/ai/guidance-schema';
-import { explanationSchema } from '@/app/lib/ai/explanation-schema';
+import { explanationSchema, mistakeKey } from '@/app/lib/ai/explanation-schema';
 import { generateBatchForSkill } from '@/app/lib/ai/generate';
 import { parseSpr } from '@/app/lib/spr';
 import { createAdminClient } from '@/app/lib/supabase/admin';
@@ -297,19 +297,26 @@ export async function topupSkill(
 // --- explainForUser ---------------------------------------------------------
 
 export type ExplainForUserResult =
-  | { status: 'ok'; explanation: string; takeaway: string }
+  | { status: 'ok'; explanation: string; takeaway: string; cached?: boolean }
   | { status: 'capped' }
   | { status: 'failed' };
 
-// "Explain my mistake" (design spec §E). Generate a per-question explanation of
-// the student's specific wrong answer, rate-capped per user per UTC day. Never
-// throws — the route degrades gracefully on any error.
-//   - Count today's (UTC) sat.coach_explains rows for the user (service role).
-//     At/over EXPLAIN_DAILY_CAP → { status: 'capped' } (no generation).
+// "Explain my mistake" (design spec §E + §C cache). Generate a per-question
+// explanation of the student's specific wrong answer, rate-capped per user per
+// UTC day, backed by a shared content cache. Never throws — the route degrades
+// gracefully on any error.
+//   - CACHE READ (design spec §C): compute the content-stable mistakeKey and
+//     SELECT sat.mistake_explanations by (question_id, chosen_key). A HIT
+//     returns { status: 'ok', ..., cached: true } IMMEDIATELY — no daily-cap
+//     check, no AI call, no coach_explains log (a hit is free).
+//   - MISS: count today's (UTC) sat.coach_explains rows for the user (service
+//     role). At/over EXPLAIN_DAILY_CAP → { status: 'capped' } (no generation).
 //   - Otherwise provider.explainMistake → explanationSchema.safeParse (one
-//     retry on any failure) → insert the log row (user_id, question_id) →
-//     { status: 'ok', ... }. A parse/generate failure after the retry →
-//     { status: 'failed' }.
+//     retry on any failure) → CACHE WRITE (only for trusted-live inputs — a
+//     snapshot-sourced question's text is client-supplied, so it is never
+//     cached) via upsert with ignoreDuplicates (race-safe) → insert the log row
+//     (user_id, question_id) → { status: 'ok', ... }. A parse/generate failure
+//     after the retry → { status: 'failed' }.
 // The cap is best-effort under concurrency (see EXPLAIN_DAILY_CAP).
 export async function explainForUser(
   userId: string,
@@ -317,6 +324,35 @@ export async function explainForUser(
 ): Promise<ExplainForUserResult> {
   try {
     const admin = createAdminClient();
+
+    // CACHE READ (design spec §C). Content-stable key over the student's
+    // specific wrong answer; the PK (question_id, chosen_key) keeps identical
+    // answer text on different questions separate. A hit is FREE — it skips the
+    // daily-cap check, the AI call, and the coach_explains log entirely.
+    const chosenKey = mistakeKey(
+      input.responseFormat,
+      input.chosenText,
+      input.enteredValue ?? '',
+    );
+    const cacheRes = await admin
+      .schema('sat')
+      .from('mistake_explanations')
+      .select('explanation, takeaway')
+      .eq('question_id', input.questionId)
+      .eq('chosen_key', chosenKey)
+      .maybeSingle();
+    if (cacheRes.error) {
+      // A cache-read failure must not break the feature — fall through to the
+      // normal (cap-checked) generation path.
+      console.error('[practice-gen] explainForUser cache read failed', cacheRes.error);
+    } else if (cacheRes.data) {
+      return {
+        status: 'ok',
+        explanation: cacheRes.data.explanation as string,
+        takeaway: cacheRes.data.takeaway as string,
+        cached: true,
+      };
+    }
 
     // UTC calendar-day window: [today 00:00Z, now]. head:exact count is a
     // single round trip that never pulls rows.
@@ -352,6 +388,31 @@ export async function explainForUser(
       const parsed = explanationSchema.safeParse(content);
       if (!parsed.success) continue;
 
+      // CACHE WRITE (design spec §C). Only trusted-live inputs are cached — a
+      // snapshot-sourced question's text is client-supplied, so caching it
+      // could poison the shared cache for other students. Upsert with
+      // ignoreDuplicates is race-safe: a concurrent generation that landed the
+      // same (question_id, chosen_key) first wins and this is a no-op.
+      if (input.trusted) {
+        const cacheWrite = await admin
+          .schema('sat')
+          .from('mistake_explanations')
+          .upsert(
+            {
+              question_id: questionId,
+              chosen_key: chosenKey,
+              explanation: parsed.data.explanation,
+              takeaway: parsed.data.takeaway,
+              model: MODEL,
+            },
+            { onConflict: 'question_id,chosen_key', ignoreDuplicates: true },
+          );
+        if (cacheWrite.error) {
+          // A cache-write failure must not mask a successful explanation.
+          console.error('[practice-gen] explainForUser cache write failed', cacheWrite.error);
+        }
+      }
+
       // Log the call (rate-cap trail). A logging failure must not mask a
       // successful explanation — the response is already valid.
       const log = await admin
@@ -366,6 +427,7 @@ export async function explainForUser(
         status: 'ok',
         explanation: parsed.data.explanation,
         takeaway: parsed.data.takeaway,
+        cached: false,
       };
     }
     return { status: 'failed' };
