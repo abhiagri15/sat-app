@@ -11,6 +11,12 @@ export interface DrillResult {
   enteredValue: string | null;
   /** Client-graded for instant feedback; server re-verifies at save. */
   isCorrect: boolean;
+  /**
+   * Sub-project #15: active-display milliseconds for this drill question
+   * (display → check), capped at TIME_MS_CAP. null when unmeasured or 0.
+   * Display/analytics-only — never feeds correctness.
+   */
+  timeMs: number | null;
 }
 
 export interface PracticeResponsePayload {
@@ -29,6 +35,8 @@ export interface PracticeResponsePayload {
   enteredValue: string | null;
   correctAnswer: string | null;
   answerTolerance: number | null;
+  timeMs: number | null;           // Sub-project #15: per-question active-display ms. null = absent/0.
+  figure: unknown | null;          // Sub-project #15: figure snapshot as presented. null = no figure.
 }
 
 export interface PracticePayload {
@@ -67,6 +75,10 @@ export function toPracticePayload(
       enteredValue: spr ? r.enteredValue : null,
       correctAnswer: spr ? (q.correct_answer ?? null) : null,
       answerTolerance: spr ? (q.answer_tolerance ?? null) : null,
+      // Per-question time: null when unmeasured or 0. Display/analytics only.
+      timeMs: r.timeMs != null && r.timeMs > 0 ? r.timeMs : null,
+      // Figure snapshot as presented (Task 5 narrows the type).
+      figure: q.figure ?? null,
     };
   });
   return {

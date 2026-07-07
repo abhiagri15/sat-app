@@ -5,6 +5,7 @@ import {
   appendModule2,
   buildTest,
   computeResults,
+  TIME_MS_CAP,
   type Results,
   type ResponseValue,
   type Test,
@@ -152,6 +153,46 @@ export function useTestSession(initialName = ''): TestSession {
   // section countdown (tickRef). It must never mutate remaining[][].
   const breakTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Sub-project #15 per-question timing. `timesMsRef` is a 3-D accumulator
+  // parallel to `responses` ([section][module][question]) holding total
+  // active-display milliseconds per question, accumulated across revisits and
+  // capped at TIME_MS_CAP each. It lives in a ref (not state) because it is
+  // never rendered — it is read once at save time. The stopwatch itself is a
+  // single "active question + started-at" record: NOT the countdown interval
+  // (which is untouched), just Date.now() deltas committed at the stop points
+  // (question nav / module submit / pause / break / results). paused freezes it
+  // the same way it freezes the countdown — while paused no question is active.
+  const timesMsRef = useRef<number[][][]>([]);
+  const activeQuestionRef = useRef<{ si: number; mi: number; qi: number; startedAt: number } | null>(
+    null,
+  );
+
+  // Stop the stopwatch and accumulate the elapsed ms into the active question's
+  // cell (capped). Idempotent — a second call with no active question is a
+  // no-op, so overlapping stop points (e.g. pause racing a nav) are safe.
+  const commitStopwatch = useCallback(() => {
+    const active = activeQuestionRef.current;
+    activeQuestionRef.current = null;
+    if (!active) return;
+    const elapsed = Date.now() - active.startedAt;
+    if (!(elapsed > 0)) return;
+    const matrix = timesMsRef.current;
+    const cell = matrix[active.si]?.[active.mi];
+    if (!cell || active.qi >= cell.length) return;
+    cell[active.qi] = Math.min(TIME_MS_CAP, (cell[active.qi] ?? 0) + elapsed);
+  }, []);
+
+  // (Re)start the stopwatch for a given question. Commits any currently-active
+  // question first so no time is dropped when moving directly between two
+  // displayed questions.
+  const startStopwatch = useCallback(
+    (si: number, mi: number, qi: number) => {
+      commitStopwatch();
+      activeQuestionRef.current = { si, mi, qi, startedAt: Date.now() };
+    },
+    [commitStopwatch],
+  );
+
   const stopTimer = useCallback(() => {
     if (tickRef.current) {
       clearInterval(tickRef.current);
@@ -217,6 +258,21 @@ export function useTestSession(initialName = ''): TestSession {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen]);
 
+  // Sub-project #15: drive the per-question stopwatch off the SAME display
+  // signals as the UI. When a question is on screen (test + not paused), the
+  // stopwatch runs for the current (secIdx, modIdx, qIdx); it (re)starts on any
+  // change to that tuple — question navigation, module submit (modIdx/secIdx
+  // move), or a Module-2 append that flips modIdx to 1. Whenever we leave that
+  // condition (pause, entering the break, or landing on results/start), the
+  // cleanup commits the elapsed time. This is Date.now() deltas in a ref — it
+  // never touches the countdown interval. The final commit before save is also
+  // done explicitly in finish() (belt-and-suspenders against unmount ordering).
+  useEffect(() => {
+    if (screen !== 'test' || paused) return;
+    startStopwatch(secIdx, modIdx, qIdx);
+    return commitStopwatch;
+  }, [screen, paused, secIdx, modIdx, qIdx, startStopwatch, commitStopwatch]);
+
   // Runs the save through the retry policy. Retries transient failures (network
   // blip, serverless cold-start, brief Supabase hiccup) with backoff; stops
   // immediately on terminal failures (invalid payload, daily limit, no session).
@@ -257,7 +313,7 @@ export function useTestSession(initialName = ''): TestSession {
     if (screen !== 'results' || !test || !results || savedRef.current) return;
     savedRef.current = true;
     setSessionCompletions((n) => n + 1); // one submitted test, for the daily-limit gate
-    const payload = toAttemptPayload(test, responses, results, testLength, breaksUsed);
+    const payload = toAttemptPayload(test, responses, results, testLength, breaksUsed, timesMsRef.current);
     const attemptUuid = newAttemptUuid();
     pendingPayloadRef.current = { payload, attemptUuid };
     // Write the local backup BEFORE the network call so a tab close / reload
@@ -315,6 +371,10 @@ export function useTestSession(initialName = ''): TestSession {
 
   const finish = () => {
     stopTimer();
+    // Commit the final question's time before the results screen reads the
+    // accumulator (the display effect's cleanup also fires on the screen
+    // change, but committing here first makes the ordering explicit).
+    commitStopwatch();
     setScreen('results');
   };
 
@@ -394,6 +454,13 @@ export function useTestSession(initialName = ''): TestSession {
     setResponses(
       t.sections.map((s) => s.modules.map((m) => new Array(m.questions.length).fill(null))),
     );
+    // Per-question timing accumulator, parallel to `responses` (Module 2 rows
+    // are appended lazily by applyModule2Draw). Reset the stopwatch too so a
+    // fresh test never carries a stale active question.
+    timesMsRef.current = t.sections.map((s) =>
+      s.modules.map((m) => new Array<number>(m.questions.length).fill(0)),
+    );
+    activeQuestionRef.current = null;
     setRemaining(t.sections.map((s) => s.modules.map((m) => m.timeLimit)));
     setSecIdx(0);
     setModIdx(0);
@@ -437,6 +504,11 @@ export function useTestSession(initialName = ''): TestSession {
       next[targetSecIdx][1] = new Array(drawnLen).fill(null);
       return next;
     });
+    // Grow the timing accumulator to match: append the Module-2 row so its
+    // per-question cells exist before the stopwatch starts on modIdx=1.
+    if (timesMsRef.current[targetSecIdx]) {
+      timesMsRef.current[targetSecIdx][1] = new Array<number>(drawnLen).fill(0);
+    }
     setRemaining((rem) => {
       const next = rem.map((arr) => arr.slice());
       // Full Module 2 seeds from official `moduleSeconds`; a cold-start short
@@ -585,6 +657,9 @@ export function useTestSession(initialName = ''): TestSession {
     savedRef.current = false;
     pendingPayloadRef.current = null;
     module2ParamsRef.current = null;
+    // Clear the timing accumulator + stopwatch so the next test starts fresh.
+    timesMsRef.current = [];
+    activeQuestionRef.current = null;
     setSaveStatus('idle');
     setSaveError(null);
     setPaused(false);

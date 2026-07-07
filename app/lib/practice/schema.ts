@@ -17,6 +17,11 @@ const practiceResponseSchema = z
     enteredValue: z.string().nullable(),
     correctAnswer: z.string().nullable(),
     answerTolerance: z.number().nullable(),
+    // Sub-project #15: per-question timing + figure snapshot. Listed so zod's
+    // strip mode does NOT drop them — sat.save_practice reads timeMs + figure
+    // off the payload. Same bound + shape as the attempt schema.
+    timeMs: z.number().int().min(0).max(600000).nullable(),
+    figure: z.unknown().nullable(),
   })
   .refine((r) => r.responseFormat === 'spr' || r.choices.length >= 1, {
     message: 'mcq responses need at least one choice',

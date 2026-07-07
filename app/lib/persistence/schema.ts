@@ -19,6 +19,13 @@ const attemptResponseSchema = z
     chosenIndex: z.number().int().min(0).nullable(),
     isCorrect: z.boolean(),
     moduleIndex: z.number().int().min(0).max(1).nullable().optional(),  // Sub-project #11: 0|1 for full, null for short
+    // Sub-project #15: per-question timing + figure snapshot. Listed so zod's
+    // strip mode does NOT drop them — sat.save_attempt reads timeMs + figure
+    // off the payload. timeMs is capped at TIME_MS_CAP (600000) at capture;
+    // this bound is the airtight backstop (over-cap is rejected). figure is the
+    // structured spec (Task 5 narrows it) or null.
+    timeMs: z.number().int().min(0).max(600000).nullable(),
+    figure: z.unknown().nullable(),
     // SPR (Format Parity) fields. Listed so zod's strip mode does NOT drop them —
     // sat.save_attempt reads responseFormat + enteredValue off the payload.
     responseFormat: z.enum(['mcq', 'spr']).optional(),

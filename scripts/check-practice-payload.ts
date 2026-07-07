@@ -55,10 +55,11 @@ const spr: Question = {
   answer_tolerance: null,
 };
 
+// Sub-project #15: DrillResult.timeMs — one null (unmeasured), the rest set.
 const results: DrillResult[] = [
-  { question: mcqRight, chosenIndex: 1, enteredValue: null, isCorrect: true },
-  { question: mcqWrong, chosenIndex: 0, enteredValue: null, isCorrect: false },
-  { question: spr, chosenIndex: -1, enteredValue: '7', isCorrect: true },
+  { question: mcqRight, chosenIndex: 1, enteredValue: null, isCorrect: true, timeMs: null },
+  { question: mcqWrong, chosenIndex: 0, enteredValue: null, isCorrect: false, timeMs: 3300 },
+  { question: spr, chosenIndex: -1, enteredValue: '7', isCorrect: true, timeMs: 5100 },
 ];
 
 const payload = toPracticePayload('11111111-1111-4111-8111-111111111111', 'math', 'Linear Equations', results);
@@ -85,6 +86,15 @@ assert(r2.chosenIndex === -1, 'spr response[2] chosenIndex === -1');
 assert(r2.correctAnswer === '7', 'spr response[2] correctAnswer present (from question)');
 assert(r2.enteredValue === '7', 'spr response[2] enteredValue carried from result');
 
+// --- Sub-project #15: timeMs (null when unmeasured) + figure null -----------
+assert(r0.timeMs === null, 'mcq response[0] timeMs === null (unmeasured DrillResult)');
+assert(payload.responses[1].timeMs === 3300, 'mcq response[1] timeMs === 3300 (measured)');
+assert(r2.timeMs === 5100, 'spr response[2] timeMs === 5100 (measured)');
+assert(
+  payload.responses.every((r) => r.figure === null),
+  'every response carries figure === null (no figure on these fixtures)',
+);
+
 // --- Assertion 2: schema ACCEPTS and preserves the wire fields --------------
 const parsed = practicePayloadSchema.safeParse(payload);
 assert(parsed.success, 'schema accepts the mapped payload');
@@ -94,6 +104,13 @@ if (parsed.success) {
   assert(p2.enteredValue === '7', 'enteredValue preserved (not stripped by zod)');
   assert(p2.correctAnswer === '7', 'correctAnswer preserved (not stripped by zod)');
   assert(p2.answerTolerance === null, 'answerTolerance preserved (not stripped by zod)');
+  assert(p2.timeMs === 5100, 'timeMs preserved (not stripped by zod)');
+  const p0 = parsed.data.responses[0] as Record<string, unknown>;
+  assert(p0.timeMs === null, 'timeMs null preserved (not stripped by zod)');
+  assert(
+    parsed.data.responses.every((r) => (r as Record<string, unknown>).figure === null),
+    'figure preserved (not stripped by zod)',
+  );
 }
 
 // --- Assertion 3: schema REJECTS an mcq response with empty choices ---------
@@ -109,6 +126,14 @@ const emptyResponses = { ...payload, responses: [] as typeof payload.responses }
 assert(
   !practicePayloadSchema.safeParse(emptyResponses).success,
   'payload with responses: [] is rejected',
+);
+
+// --- Assertion 5: cap enforced — timeMs over TIME_MS_CAP is rejected --------
+const overCap = structuredClone(payload);
+overCap.responses[0] = { ...overCap.responses[0], timeMs: 600001 };
+assert(
+  !practicePayloadSchema.safeParse(overCap).success,
+  'timeMs of 600001 (over TIME_MS_CAP) is rejected',
 );
 
 console.log(`\ncheck-practice-payload: ${count} assertions passed`);

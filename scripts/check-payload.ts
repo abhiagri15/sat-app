@@ -29,7 +29,18 @@ const responses: ResponseValue[][][] = test.sections.map((sec, si) =>
 );
 
 const results = computeResults(test, responses);
-const payload = toAttemptPayload(test, responses, results, 'short', false);
+
+// A timing matrix parallel to `responses`: question 0 of section 0 is left at 0
+// (→ null on the wire), question 1 gets a real value (→ preserved). Everything
+// else defaults to 0/null. Exercises both the "absent/0 → null" and the
+// "present → number" branches of the mapper.
+const timesMs: number[][][] = responses.map((sec, si) =>
+  sec.map((mod, mi) =>
+    mod.map((_v, qi) => (si === 0 && mi === 0 && qi === 1 ? 4200 : 0)),
+  ),
+);
+
+const payload = toAttemptPayload(test, responses, results, 'short', false, timesMs);
 
 const totalQ = test.sections.reduce((n, s) => n + sectionQuestions(s).length, 0);
 assert(payload.responses.length === totalQ,
@@ -115,6 +126,41 @@ mcqPayload.responses[0] = { ...mcqPayload.responses[0], responseFormat: 'mcq', c
 assert(
   !attemptPayloadSchema.safeParse(mcqPayload).success,
   'mcq response with empty choices is still rejected',
+);
+
+// --- Sub-project #15: per-question timeMs + figure snapshot -----------------
+// The mapper writes timeMs (null when absent/0, the number when > 0) and
+// figure (null when the question carries none). Both must survive the wire
+// schema (strip-mode guard) and the cap must be enforced.
+const timedPayload = toAttemptPayload(test, responses, results, 'short', false, timesMs);
+const zeroTimeR = timedPayload.responses.find((r) => r.timeMs === null);
+const setTimeR = timedPayload.responses.find((r) => r.timeMs === 4200);
+assert(zeroTimeR !== undefined, 'a response with timeMs null (absent/0) exists');
+assert(setTimeR !== undefined, 'a response with timeMs 4200 (measured) exists');
+assert(
+  timedPayload.responses.every((r) => r.figure === null),
+  'every response carries figure === null (no figure on seed questions)',
+);
+const timedParsed = attemptPayloadSchema.safeParse(timedPayload);
+assert(timedParsed.success, 'payload with timeMs + figure passes wire validation (strip-mode guard)');
+if (timedParsed.success) {
+  const parsedZero = timedParsed.data.responses.find((r) => r.timeMs === null);
+  const parsedSet = timedParsed.data.responses.find((r) => r.timeMs === 4200);
+  assert(parsedZero !== undefined, 'timeMs null preserved (not stripped by zod)');
+  assert(parsedSet !== undefined, 'timeMs 4200 preserved (not stripped by zod)');
+  assert(
+    timedParsed.data.responses.every((r) => (r as Record<string, unknown>).figure === null),
+    'figure field preserved (not stripped by zod)',
+  );
+}
+
+// The cap (TIME_MS_CAP = 600000) is the airtight backstop: an over-cap value
+// must be rejected by the schema.
+const overCapPayload = toAttemptPayload(test, responses, results, 'short', false, timesMs);
+overCapPayload.responses[0] = { ...overCapPayload.responses[0], timeMs: 600001 };
+assert(
+  !attemptPayloadSchema.safeParse(overCapPayload).success,
+  'timeMs of 600001 (over TIME_MS_CAP) is rejected',
 );
 
 console.log('\nALL CHECKS PASSED');

@@ -5,6 +5,14 @@ import { projectShort, scoreComposite, scoreFullSection } from './scoring';
 
 export const LETTERS = ['A', 'B', 'C', 'D', 'E'] as const;
 
+// Per-question active-display time cap (milliseconds) — 10 minutes. A single
+// question's accumulated display time is clamped to this at capture so a
+// walked-away tab (or a wall-clock jump) can't poison the pacing averages.
+// Timing is display/analytics-only — it never feeds scoring (Section A / the
+// security invariants). Shared by both timing stopwatches (useTestSession +
+// usePracticeSession) and the zod bound in both payload schemas.
+export const TIME_MS_CAP = 600_000;
+
 // A per-question response. mcq answers are the chosen index (0..3); spr
 // answers are the entered string (e.g. "3.14" or "1/2"); null = unanswered.
 export type ResponseValue = number | string | null;

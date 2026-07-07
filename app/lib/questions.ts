@@ -22,6 +22,12 @@ export interface Question {
   response_format?: 'mcq' | 'spr';   // undefined / 'mcq' = multiple choice
   correct_answer?: string | null;    // SPR canonical answer (null for mcq)
   answer_tolerance?: number | null;  // SPR float tolerance (null = exact)
+  // Structured math-figure spec (validated jsonb on sat.questions.figure).
+  // Typed `unknown | null` here on purpose — sub-project #15 Task 4 threads the
+  // snapshot end-to-end while Task 5 NARROWS this to `Figure | null` and wires
+  // generation/rendering. Do not import figure-schema here (Task 4 owns the
+  // passthrough, not the type). Null when a question carries no figure.
+  figure?: unknown | null;
 }
 
 export const BANK: Question[] = [
@@ -586,6 +592,7 @@ export function rowToQuestion(row: {
   response_format?: string | null;
   correct_answer?: string | null;
   answer_tolerance?: number | null;
+  figure?: unknown | null;
 }): Question {
   return {
     id: row.id,
@@ -602,5 +609,8 @@ export function rowToQuestion(row: {
     response_format: row.response_format === 'spr' ? 'spr' : 'mcq',
     correct_answer: row.correct_answer ?? null,
     answer_tolerance: row.answer_tolerance ?? null,
+    // Figure snapshot (jsonb, may be null). Task 5 narrows the type + validates;
+    // Task 4 just carries the raw value through null-safe.
+    figure: row.figure ?? null,
   };
 }

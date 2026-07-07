@@ -25,6 +25,8 @@ export interface AttemptResponsePayload {
   answerTolerance: number | null;  // SPR float tolerance (snapshot). null for mcq.
   isCorrect: boolean;
   moduleIndex: number | null;      // Sub-project #11: 0 = Module 1, 1 = Module 2. null for short.
+  timeMs: number | null;           // Sub-project #15: per-question active-display ms. null = absent/0.
+  figure: unknown | null;          // Sub-project #15: figure snapshot as presented. null = no figure.
 }
 
 // A whole submitted test, in the shape the save_attempt RPC consumes.
@@ -53,12 +55,19 @@ export interface AttemptPayload {
 // string. isCorrect is computed here (JS) AND server-side (sat.spr_is_correct
 // via save_attempt) — the server is the source of truth; this value is a
 // hint used for the immediate post-submit results screen.
+// `timesMs` mirrors the 3-D responses matrix ([section][module][question]) and
+// carries per-question active-display milliseconds. It is optional — old
+// callers (and the check script's simpler cases) pass nothing, so every cell
+// resolves to null. A cell that is missing OR 0 maps to null on the wire
+// (`sat.save_attempt` coalesces null → NULL). This value is display/analytics
+// only and MUST NOT feed scoring (same posture as breaksUsed / scaled_score).
 export function toAttemptPayload(
   test: Test,
   responses: ResponseValue[][][],
   results: Results,
   testLength: TestLength,
   breaksUsed: boolean,
+  timesMs?: number[][][],
 ): AttemptPayload {
   const attemptResponses: AttemptResponsePayload[] = [];
   for (let si = 0; si < test.sections.length; si++) {
@@ -70,6 +79,10 @@ export function toAttemptPayload(
         const q = mod.questions[qi];
         const v = responses[si]?.[mi]?.[qi] ?? null;
         const isSpr = q.response_format === 'spr';
+
+        // Per-question time: null when absent or 0 (an unvisited question).
+        const rawMs = timesMs?.[si]?.[mi]?.[qi] ?? 0;
+        const timeMs = rawMs > 0 ? rawMs : null;
 
         const chosenIndex = !isSpr && typeof v === 'number' ? v : null;
         const enteredValue = isSpr && typeof v === 'string' ? v : null;
@@ -99,6 +112,8 @@ export function toAttemptPayload(
           answerTolerance: q.answer_tolerance ?? null,
           isCorrect,
           moduleIndex: testLength === 'short' ? null : mi,
+          timeMs,
+          figure: q.figure ?? null,
         });
         position++;
       }

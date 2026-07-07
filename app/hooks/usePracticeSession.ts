@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { shuffleChoices } from '@/app/lib/test';
+import { shuffleChoices, TIME_MS_CAP } from '@/app/lib/test';
 import { isSprCorrect } from '@/app/lib/spr';
 import { type Question, type SectionKey } from '@/app/lib/questions';
 import { drawDrill } from '@/app/lib/practice/draw';
@@ -77,6 +77,26 @@ export function usePracticeSession(
   // (dev) — same discipline as resaveStartedRef in useTestSession.
   const autoStartedRef = useRef(false);
 
+  // Sub-project #15 per-question stopwatch (the drill hook is otherwise
+  // untimed). `Date.now()` is captured when a question is displayed (drilling
+  // entry in start(), and each next()) and read at check() to accumulate the
+  // active-display milliseconds for THAT question. One drill question is shown
+  // at a time and check() locks it (no revisits), so a single "started at"
+  // timestamp suffices — no parallel matrix. Capped at TIME_MS_CAP so a
+  // walked-away tab can't poison averages. Display/analytics only.
+  const questionStartedAtRef = useRef<number | null>(null);
+
+  // Reads the active-display ms for the current question and clears the
+  // stopwatch. Capped; null if the stopwatch wasn't running.
+  const takeQuestionMs = useCallback((): number | null => {
+    const startedAt = questionStartedAtRef.current;
+    questionStartedAtRef.current = null;
+    if (startedAt == null) return null;
+    const elapsed = Date.now() - startedAt;
+    if (!(elapsed > 0)) return null;
+    return Math.min(elapsed, TIME_MS_CAP);
+  }, []);
+
   // Runs the save. On success → 'saved'; on any failure → 'error' with the real
   // message. Used by both the fire-once save and retrySave.
   const runSave = useCallback(async (payload: PracticePayload): Promise<void> => {
@@ -131,6 +151,8 @@ export function usePracticeSession(
       setResults([]);
       setSaveStatus('idle');
       setSaveError(null);
+      // Start the stopwatch as the first question is displayed.
+      questionStartedAtRef.current = Date.now();
       setPhase('drilling');
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to load this drill';
@@ -172,6 +194,9 @@ export function usePracticeSession(
       return;
     }
 
+    // Stop the per-question stopwatch as grading happens (display → check).
+    const timeMs = takeQuestionMs();
+
     // Local grading — display-only; the server re-verifies at save.
     const isCorrect = spr
       ? isSprCorrect(entered, q.correct_answer ?? '', q.answer_tolerance ?? null)
@@ -182,6 +207,7 @@ export function usePracticeSession(
       chosenIndex: spr ? -1 : (selected as number),
       enteredValue: spr ? entered : null,
       isCorrect,
+      timeMs,
     };
 
     setResults((prev) => [...prev, result]);
@@ -193,7 +219,7 @@ export function usePracticeSession(
     } else {
       setStreak(0);
     }
-  }, [checked, questions, qIdx, selected, entered]);
+  }, [checked, questions, qIdx, selected, entered, takeQuestionMs]);
 
   const next = useCallback(() => {
     if (!checked) return; // advance only after grading the current question
@@ -216,6 +242,8 @@ export function usePracticeSession(
     setSelected(null);
     setEntered('');
     setLastCorrect(null);
+    // Restart the stopwatch as the next question is displayed.
+    questionStartedAtRef.current = Date.now();
   }, [checked, qIdx, questions.length, results, section, skill, runSave]);
 
   const retrySave = useCallback(() => {
