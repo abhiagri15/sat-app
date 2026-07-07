@@ -1,7 +1,7 @@
 'use server';
 
 import { createClient } from '@/app/lib/supabase/server';
-import { createAdminClient } from '@/app/lib/supabase/admin';
+import { logSaveFailure } from './failures';
 import { attemptPayloadSchema } from './schema';
 import { classifyError, isRetryable, type SaveErrorCode } from './retry';
 import type { AttemptPayload } from './payload';
@@ -18,37 +18,18 @@ export interface SaveAttemptMeta {
   userAgent?: string;
 }
 
-// Best-effort: record a failed save so the root-cause trigger is queryable
-// (the failure message used to be console.error'd in the browser and lost).
-// Uses the service-role client so it records even the "not authenticated"
-// failure mode, where the caller has no usable session. Never throws — a
-// logging failure must not mask the real error from the user.
-async function logSaveFailure(
-  error: string,
-  code: SaveErrorCode,
-  retryable: boolean,
-  userId: string | null,
+// Builds the attempt-specific save_failures context blob (the shape the
+// inline logger used to write). Kept here so both call sites stay identical.
+function attemptFailureContext(
   payload: AttemptPayload,
   meta?: SaveAttemptMeta,
-): Promise<void> {
-  try {
-    const admin = createAdminClient();
-    await admin.schema('sat').from('save_failures').insert({
-      user_id: userId,
-      error_message: error.slice(0, 2000),
-      error_code: code,
-      retryable,
-      attempt_no: meta?.attemptNo ?? null,
-      context: {
-        testLength: payload.testLength,
-        totalQuestions: payload.totalQuestions,
-        attemptUuid: meta?.attemptUuid ?? null,
-        userAgent: meta?.userAgent ?? null,
-      },
-    });
-  } catch (e) {
-    console.error('[saveAttempt] failed to log save failure (non-fatal):', e);
-  }
+): Record<string, unknown> {
+  return {
+    testLength: payload.testLength,
+    totalQuestions: payload.totalQuestions,
+    attemptUuid: meta?.attemptUuid ?? null,
+    userAgent: meta?.userAgent ?? null,
+  };
 }
 
 // Persists a finished test. Validates the payload, then calls the
@@ -63,7 +44,14 @@ export async function saveAttempt(
   if (!parsed.success) {
     console.error('[saveAttempt] invalid payload', parsed.error);
     const code = classifyError('invalid payload');
-    await logSaveFailure('invalid payload', code, isRetryable(code), null, payload, meta);
+    await logSaveFailure({
+      errorMessage: 'invalid payload',
+      errorCode: code,
+      retryable: isRetryable(code),
+      userId: null,
+      attemptNo: meta?.attemptNo,
+      context: attemptFailureContext(payload, meta),
+    });
     return { ok: false, error: 'invalid payload', code, retryable: isRetryable(code) };
   }
   const p = parsed.data;
@@ -98,7 +86,14 @@ export async function saveAttempt(
     } catch {
       /* ignore — logging is best-effort */
     }
-    await logSaveFailure(error.message, code, retryable, userId, payload, meta);
+    await logSaveFailure({
+      errorMessage: error.message,
+      errorCode: code,
+      retryable,
+      userId,
+      attemptNo: meta?.attemptNo,
+      context: attemptFailureContext(payload, meta),
+    });
     return { ok: false, error: error.message, code, retryable };
   }
   return { ok: true, id: data as string };
