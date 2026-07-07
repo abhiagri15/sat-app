@@ -37,8 +37,12 @@ const FAQS = [
     a: 'Yes. Only your account sees your attempt history and analytics. Aggregate pool numbers on this page are public, but per-user data is not.',
   },
   {
+    q: 'How is my score calculated?',
+    a: 'Each section is scored against a real College Board–published Digital SAT curve, then the two sections sum to a 400–1600 composite. We label it an estimated score: it typically lands within about ±30 points per section of a real administration. It’s an honest practice estimate, not an official College Board score.',
+  },
+  {
     q: 'How accurate is the difficulty rating?',
-    a: 'Every question is classified Easy / Medium / Hard at generation time. Admins periodically review and reclassify questions as needed.',
+    a: 'Every question starts classified Easy / Medium / Hard at generation time. As students answer, those labels recalibrate from real performance — a question most people get right is relabeled easier, one most people miss is relabeled harder — so the difficulty tiers sharpen automatically as data accumulates. Admins can also review and reclassify questions.',
   },
   {
     q: 'Can I use this on mobile?',

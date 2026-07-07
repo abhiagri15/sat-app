@@ -2,7 +2,15 @@
 const CARDS = [
   {
     title: 'A real Digital SAT structure',
-    body: 'Module 1 then Module 2 (Easier or Harder), section split, timed — the same shape as the real test.',
+    body: 'Module 1 then Module 2 (Easier or Harder), official 32-minute Reading & Writing and 35-minute Math modules, and a mandatory 10-minute break between sections — the same shape and timing as the real test.',
+  },
+  {
+    title: 'Math figures, not just words',
+    body: 'Math questions include graphs, tables, and geometry figures — rendered in-app the way you’ll see them on test day, not left to your imagination.',
+  },
+  {
+    title: 'Per-question pacing insights',
+    body: 'We time every question so your analytics show where you’re slow but right versus slow and wrong — pacing is half the Digital SAT battle.',
   },
   {
     title: 'Questions you haven’t seen',
