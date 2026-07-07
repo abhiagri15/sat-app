@@ -22,6 +22,7 @@ const TABS: Tab[] = [
   { label: 'Pool Health', href: '/admin/pool' },
   { label: 'Users', href: '/admin/users' },
   { label: 'Open Flags', href: '/admin/flags' },
+  { label: 'Review queue', href: '/admin/review' },
   { label: 'Settings', href: '/admin/settings' },
 ];
 

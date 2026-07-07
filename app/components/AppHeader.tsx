@@ -39,6 +39,14 @@ export async function AppHeader() {
             Admin
           </Link>
         )}
+        {/* Plain mailto — the audience here is authenticated, so no scraper
+            exposure to obfuscate against (spec §E). */}
+        <a
+          href="mailto:abhishek15@gmail.com"
+          className="text-sm text-slate-500 transition-colors hover:text-slate-900"
+        >
+          Contact
+        </a>
       </nav>
       <div className="flex items-center gap-3">
         <span className="text-sm text-slate-600">{displayName}</span>

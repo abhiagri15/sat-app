@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { getPoolCounts } from '@/app/lib/admin/queries';
+import { getPoolCounts, getReviewQueue } from '@/app/lib/admin/queries';
 import { getUsersStats } from '@/app/lib/admin/users';
 import { countOpenFlags } from '@/app/lib/admin/flags';
 import { getDailyAttemptLimit } from '@/app/lib/config';
@@ -39,12 +39,14 @@ function Card({ title, href, description, stats }: CardProps) {
 }
 
 export default async function AdminOverviewPage() {
-  const [counts, userStats, openFlags, dailyLimit] = await Promise.all([
-    getPoolCounts(),
-    getUsersStats(),
-    countOpenFlags(),
-    getDailyAttemptLimit(),
-  ]);
+  const [counts, userStats, openFlags, dailyLimit, reviewQueue] =
+    await Promise.all([
+      getPoolCounts(),
+      getUsersStats(),
+      countOpenFlags(),
+      getDailyAttemptLimit(),
+      getReviewQueue(),
+    ]);
 
   return (
     <main className="mx-auto max-w-3xl p-6">
@@ -80,6 +82,12 @@ export default async function AdminOverviewPage() {
           href="/admin/flags"
           description="Review user-reported issues with questions."
           stats={[{ label: 'Awaiting review', value: openFlags }]}
+        />
+        <Card
+          title="Needs review"
+          href="/admin/review"
+          description="Item-quality anomalies: heavily flagged or too hard/easy."
+          stats={[{ label: 'Needs review', value: reviewQueue.length }]}
         />
         <Card
           title="Settings"

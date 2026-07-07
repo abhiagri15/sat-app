@@ -167,6 +167,90 @@ export interface QuestionItemStats {
   openFlags: number;
 }
 
+// The admin needs-review queue (design spec §D) — one row per ENABLED question
+// that is an item-quality anomaly: heavily flagged (open_flags >= 2), or, with
+// >= 10 graded responses, pathologically hard (p < 0.15) or easy (p > 0.97).
+// Ordered flags desc then n desc by the RPC.
+//
+// Backed by sat.admin_review_queue(p_limit) — security-definer, grant-execute
+// to service_role ONLY, so it is called via the service-role client (students
+// must never be able to enumerate item-quality anomalies). The page route is
+// already requireAdmin()'d.
+//
+// The RPC returns bigints (n, open_flags) as strings over the wire — coerce via
+// Number(). It returns only question_id; we fetch the prompts for the returned
+// ids in one in() query on sat.questions (the listFlags precedent) and merge so
+// the queue can show a prompt excerpt.
+//
+// Degrades gracefully: if the RPC errors (e.g. the migration is not applied
+// yet), console.error and return an empty queue rather than throwing — an
+// unmigrated environment shows "Nothing needs review", not a 500.
+export type ReviewReason = 'flagged' | 'very-hard-suspect' | 'too-easy';
+
+export interface ReviewQueueRow {
+  question_id: string;
+  section: 'rw' | 'math';
+  skill: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  n: number;
+  p_value: number | null;
+  open_flags: number;
+  reasons: ReviewReason[];
+  prompt: string;
+}
+
+interface ReviewQueueRaw {
+  question_id: string;
+  section: 'rw' | 'math';
+  skill: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  n: number | string;
+  p_value: number | string | null;
+  open_flags: number | string;
+  reasons: string[] | null;
+}
+
+export async function getReviewQueue(limit = 50): Promise<ReviewQueueRow[]> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .schema('sat')
+    .rpc('admin_review_queue', { p_limit: limit });
+  if (error || !data) {
+    console.error('[getReviewQueue] failed:', error);
+    return [];
+  }
+
+  const raw = data as unknown as ReviewQueueRaw[];
+  if (raw.length === 0) return [];
+
+  // Fetch the prompts for the returned ids in one round trip and merge.
+  const ids = [...new Set(raw.map((r) => r.question_id))];
+  const { data: questions, error: qErr } = await admin
+    .schema('sat')
+    .from('questions')
+    .select('id, prompt')
+    .in('id', ids);
+  if (qErr) console.error('[getReviewQueue] prompt fetch failed:', qErr);
+  const prompts = new Map(
+    ((questions ?? []) as unknown as { id: string; prompt: string }[]).map((q) => [
+      q.id,
+      q.prompt,
+    ]),
+  );
+
+  return raw.map((r) => ({
+    question_id: r.question_id,
+    section: r.section,
+    skill: r.skill,
+    difficulty: r.difficulty,
+    n: Number(r.n),
+    p_value: r.p_value == null ? null : Number(r.p_value),
+    open_flags: Number(r.open_flags),
+    reasons: (r.reasons ?? []) as ReviewReason[],
+    prompt: prompts.get(r.question_id) ?? '(question not found)',
+  }));
+}
+
 export async function getQuestionItemStats(id: string): Promise<QuestionItemStats> {
   const admin = createAdminClient();
 
