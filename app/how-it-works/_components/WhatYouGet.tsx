@@ -2,7 +2,7 @@
 const CARDS = [
   {
     title: 'A real Digital SAT structure',
-    body: 'Module 1 then Module 2 (Easier or Harder), official 32-minute Reading & Writing and 35-minute Math modules, and a mandatory 10-minute break between sections — the same shape and timing as the real test.',
+    body: 'Module 1 then Module 2 (Easier or Harder), official 32-minute Reading & Writing and 35-minute Math modules, and a mandatory 10-minute break between sections — plus passage highlighting, a line reader, and crash recovery if your tab closes mid-test.',
   },
   {
     title: 'Math figures, not just words',
@@ -31,6 +31,10 @@ const CARDS = [
   {
     title: 'Difficulty that adapts to you',
     body: 'Drills lean easier while you’re building a skill and harder once you’re strong, based on your recent accuracy.',
+  },
+  {
+    title: 'A weekly plan that adapts',
+    body: 'Set a target score and test date and get a "do this next" plan for the week — which skills to drill, when to take a full test, what’s overdue — that reshapes itself as your results come in.',
   },
 ];
 

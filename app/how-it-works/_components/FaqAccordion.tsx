@@ -29,6 +29,10 @@ const FAQS = [
     a: 'A short, personalized read on where you stand in a skill — written by AI from your actual recent answers (what you chose vs. what was right) and refreshed automatically once you’ve done new work. Only you can see it.',
   },
   {
+    q: 'Does it tell me what to study each week?',
+    a: 'Yes. Set a target score and (optionally) a test date, and the Plan page builds a weekly "do this next" list — the skills to drill, when to take a full-length test, and what review is overdue. It’s derived from your actual results, so it reshapes itself as you practice; there are no checkboxes to maintain.',
+  },
+  {
     q: 'What happens to questions I flag?',
     a: 'Flags go to an admin review queue. If the question is confirmed incorrect or ambiguous, an admin disables it and it’s never served again.',
   },
