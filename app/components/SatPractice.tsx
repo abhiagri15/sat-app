@@ -84,6 +84,11 @@ export default function SatPractice({
         onPrev={() => s.goToQuestion(Math.max(0, s.qIdx - 1))}
         onNext={() => s.goToQuestion(Math.min(mod.questions.length - 1, s.qIdx + 1))}
         onSubmitModule={s.submitModule}
+        marked={s.marked}
+        onToggleMarked={s.toggleMarked}
+        moduleReview={s.moduleReview}
+        onOpenReview={s.openModuleReview}
+        onCloseReview={s.closeModuleReview}
         hideModule2Path={hideModule2Path}
         breaksEnabled={s.breaksEnabled}
         paused={s.paused}

@@ -72,6 +72,19 @@ export interface TestSession {
   secIdx: number;
   modIdx: number;
   qIdx: number;
+  // Mark-for-review (sub-project #16). UI-only, never persisted. Keyed
+  // "${secIdx}-${modIdx}-${qIdx}" so marks are module-scoped (a module's
+  // Check-Your-Work only reads its own keys — nothing carries across modules or
+  // sections, matching Bluebook). Reset in start()/newTest(). NOT the post-test
+  // results review (that is showReview/toggleReview).
+  marked: Set<string>;
+  toggleMarked: () => void;
+  // The in-test "Check your work" page shown before a module is submitted. The
+  // section countdown keeps running while it is open (authentic). Auto-closes on
+  // every boundary via one effect.
+  moduleReview: boolean;
+  openModuleReview: () => void;
+  closeModuleReview: (qi?: number) => void;
   // Per-question answer matrix, 3-D: [section][module][question].
   // mcq cells hold the chosen choice index (number); SPR cells hold the
   // entered string. null = unanswered.
@@ -125,6 +138,10 @@ export function useTestSession(initialName = ''): TestSession {
   const [qIdx, setQIdx] = useState(0);
   const [responses, setResponses] = useState<ResponseValue[][][]>([]);
   const [remaining, setRemaining] = useState<number[][]>([]);
+  // Mark-for-review set (keyed by "${secIdx}-${modIdx}-${qIdx}") and the
+  // Check-Your-Work page flag. Both UI-only; see the interface docs.
+  const [marked, setMarked] = useState<Set<string>>(new Set());
+  const [moduleReview, setModuleReview] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
@@ -267,11 +284,24 @@ export function useTestSession(initialName = ''): TestSession {
   // cleanup commits the elapsed time. This is Date.now() deltas in a ref — it
   // never touches the countdown interval. The final commit before save is also
   // done explicitly in finish() (belt-and-suspenders against unmount ordering).
+  // #16: opening the Check-Your-Work page (moduleReview) also commits+stops the
+  // stopwatch — review time must accrue to NO question (the countdown keeps
+  // running, but no single question is on screen), else it corrupts pacing.
   useEffect(() => {
-    if (screen !== 'test' || paused) return;
+    if (screen !== 'test' || paused || moduleReview) return;
     startStopwatch(secIdx, modIdx, qIdx);
     return commitStopwatch;
-  }, [screen, paused, secIdx, modIdx, qIdx, startStopwatch, commitStopwatch]);
+  }, [screen, paused, moduleReview, secIdx, modIdx, qIdx, startStopwatch, commitStopwatch]);
+
+  // #16: auto-close the Check-Your-Work page on EVERY boundary via ONE effect.
+  // The module/section advances live in five scattered paths (short-test
+  // advance, finish, the async Module-2 draw that flips modIdx, break entry, and
+  // resumeFromBreak) — per-site resets would leak, so this single effect keyed
+  // on the boundary tuple covers all of them (Module 2 must never start under a
+  // stale review page).
+  useEffect(() => {
+    setModuleReview(false);
+  }, [secIdx, modIdx, screen]);
 
   // Runs the save through the retry policy. Retries transient failures (network
   // blip, serverless cold-start, brief Supabase hiccup) with backoff; stops
@@ -466,6 +496,9 @@ export function useTestSession(initialName = ''): TestSession {
     setModIdx(0);
     setQIdx(0);
     setShowReview(false);
+    // #16: a fresh test starts with no marks and no open review page.
+    setMarked(new Set());
+    setModuleReview(false);
     setBreaksEnabled(testLength === 'short' ? false : breaksEnabled);
     setPaused(false);
     setBreaksUsed(false);
@@ -482,6 +515,30 @@ export function useTestSession(initialName = ''): TestSession {
   };
 
   const goToQuestion = (qi: number) => setQIdx(qi);
+
+  // Toggle mark-for-review on the CURRENT question. Keyed by the module-scoped
+  // "${secIdx}-${modIdx}-${qIdx}" so a mark never leaks across modules/sections.
+  const toggleMarked = useCallback(() => {
+    const key = `${secIdx}-${modIdx}-${qIdx}`;
+    setMarked((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, [secIdx, modIdx, qIdx]);
+
+  // Open the Check-Your-Work page (does NOT submit — the page's primary button
+  // calls submitModule). The stopwatch commits+stops via the display effect's
+  // moduleReview guard; the section countdown keeps running.
+  const openModuleReview = useCallback(() => setModuleReview(true), []);
+
+  // Close the Check-Your-Work page and return to the question view. An optional
+  // jump target sets qIdx first (click-to-jump from a review square).
+  const closeModuleReview = useCallback((qi?: number) => {
+    if (typeof qi === 'number') setQIdx(qi);
+    setModuleReview(false);
+  }, []);
 
   // Perform a single Module-2 draw and apply it to state. Throws on any draw
   // failure (the caller's retry logic handles it). Keeps the moduleSize timer
@@ -667,6 +724,9 @@ export function useTestSession(initialName = ''): TestSession {
     setBreakRemaining(BREAK_SECONDS);
     setStartError(null);
     setModule2Error(null);
+    // #16: clear marks + any open review page.
+    setMarked(new Set());
+    setModuleReview(false);
     setScreen('start');
   };
 
@@ -679,6 +739,7 @@ export function useTestSession(initialName = ''): TestSession {
     breaksEnabled, setBreaksEnabled, paused, pause, resume, breaksUsed,
     breakRemaining, resumeFromBreak, startError, module2Error, retryModule2,
     test, secIdx, modIdx, qIdx, responses, remaining,
+    marked, toggleMarked, moduleReview, openModuleReview, closeModuleReview,
     showReview, toggleReview, loading, saveStatus, saveError, retrySave,
     resaveStatus, sessionCompletions,
     start, setAnswer, goToQuestion, submitModule, newTest, results,

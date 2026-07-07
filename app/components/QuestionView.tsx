@@ -119,9 +119,8 @@ export function QuestionView({
           </Button>
           <Button
             onClick={onNext}
-            disabled={isLast}
           >
-            {isLast ? 'Last question' : 'Next ›'}
+            {isLast ? 'Review' : 'Next ›'}
           </Button>
         </div>
       </CardContent>

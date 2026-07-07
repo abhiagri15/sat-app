@@ -12,11 +12,16 @@ interface QuestionNavigatorProps {
   // Module-scoped slice. mcq: number | null; SPR: string | null. Either
   // non-nullish value counts as "answered" for the navigator badge.
   sectionResponses: ResponseValue[];
+  // #16: predicate closing over the marked Set + module key prefix (the global
+  // key format never leaks in here); marked squares get a bookmark corner badge.
+  isMarked: (qi: number) => boolean;
   onGoToQuestion: (qi: number) => void;
-  onSubmitModule: () => void;
-  isLastSection: boolean;
-  isLastModule: boolean;
-  testLength: 'short' | 'full';
+  // #16: opens the Check-Your-Work page (it no longer submits directly — the
+  // review page is the only path that calls submitModule).
+  onOpenReview: () => void;
+  // The FSM-next submit label, computed in TestScreen and shared with the
+  // Check-Your-Work page.
+  submitLabel: string;
 }
 
 export function QuestionNavigator({
@@ -24,23 +29,12 @@ export function QuestionNavigator({
   modIdx,
   qIdx,
   sectionResponses,
+  isMarked,
   onGoToQuestion,
-  onSubmitModule,
-  isLastSection,
-  isLastModule,
-  testLength,
+  onOpenReview,
+  submitLabel,
 }: QuestionNavigatorProps) {
   const mod = section.modules[modIdx];
-  // Submit-button label picks up the FSM-next transition. Cosmetic polish
-  // for full-test module indicators is sub-project #11 Commit 5; this label
-  // is the minimum the FSM needs to communicate the next step.
-  const submitLabel = testLength === 'short'
-    ? (isLastSection ? 'Submit test' : 'Submit section')
-    : !isLastModule
-      ? 'Continue to Module 2'
-      : isLastSection
-        ? 'Submit test'
-        : 'Submit section';
   return (
     <Card className="mt-4">
       <CardContent className="pt-6">
@@ -52,23 +46,39 @@ export function QuestionNavigator({
             // string means answered. null / undefined / "" means unanswered.
             const answered =
               typeof r === 'number' || (typeof r === 'string' && r.trim() !== '');
+            const marked = isMarked(i);
             return (
               <button
                 key={i}
+                aria-label={clsx(
+                  `Question ${i + 1},`,
+                  answered ? 'answered' : 'unanswered',
+                  marked && ', marked for review',
+                )}
                 className={clsx(
-                  'w-10 h-10 rounded-md bg-slate-100 text-slate-900 font-semibold border border-slate-200 cursor-pointer',
+                  'relative w-10 h-10 rounded-md bg-slate-100 text-slate-900 font-semibold border border-slate-200 cursor-pointer',
                   answered && 'bg-blue-600 text-white border-blue-600',
                   i === qIdx && 'outline outline-2 outline-blue-300',
                 )}
                 onClick={() => onGoToQuestion(i)}
               >
                 {i + 1}
+                {marked && (
+                  <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    fill="currentColor"
+                    className="absolute -right-1 -top-1 h-3.5 w-3.5 text-amber-500 drop-shadow-sm"
+                  >
+                    <path d="M6 3.5A1.5 1.5 0 0 1 7.5 2h9A1.5 1.5 0 0 1 18 3.5V21l-6-3.6L6 21V3.5Z" />
+                  </svg>
+                )}
               </button>
             );
           })}
         </div>
         <div className="flex flex-wrap gap-2.5 mt-2">
-          <Button onClick={onSubmitModule}>{submitLabel}</Button>
+          <Button onClick={onOpenReview}>Review &amp; submit</Button>
         </div>
       </CardContent>
     </Card>
