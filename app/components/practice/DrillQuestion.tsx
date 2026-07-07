@@ -44,15 +44,26 @@ export function DrillQuestion({
   const isSpr = question.response_format === 'spr';
   const canCheck = isSpr ? entered.trim().length > 0 : selected != null;
 
-  // Keyboard: Enter checks the answer (when one is chosen/typed and not yet
-  // graded), then Enter advances once graded. Ignore Enter inside a textarea
-  // (the flag widget) so reporting a problem doesn't submit the question.
+  // Keyboard: Enter checks/advances only when focus is NOT on an interactive
+  // control — buttons (choices, flag submit, Next), selects, and textareas
+  // (the flag widget) keep their native Enter activation, so keyboard users
+  // can select a choice with Enter and the flag form is never hijacked. The
+  // one exception is the SPR text input, where Enter means "check my answer".
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Enter') return;
-      const target = e.target as HTMLElement | null;
-      if (target && target.tagName === 'TEXTAREA') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'A') {
+        return;
+      }
+      if (tag === 'INPUT') {
+        if (!checked && canCheck) {
+          e.preventDefault();
+          onCheck();
+        }
+        return;
+      }
       e.preventDefault();
       if (!checked) {
         if (canCheck) onCheck();
