@@ -88,6 +88,7 @@ export default async function AttemptReviewPage({
                 // For mcq rows pass chosen_index; for spr rows pass the
                 // entered string. Either is null when skipped.
                 response={row.response_format === 'spr' ? row.entered_value : row.chosen_index}
+                timeMs={row.time_ms}
               />
             ))}
           </section>

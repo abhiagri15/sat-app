@@ -16,6 +16,7 @@ export interface AdminQuestion {
   difficulty: 'easy' | 'medium' | 'hard';      // Sub-project #11
   classified_at: string | null;                // Sub-project #11
   figure: unknown | null;                       // Sub-project #15: figure spec (jsonb)
+  difficulty_source: 'model' | 'empirical';     // Sub-project #15: model-labeled vs empirically calibrated
 }
 
 export interface PoolCounts {
@@ -35,7 +36,7 @@ export interface QuestionFilters {
 }
 
 const QUESTION_COLUMNS =
-  'id, section, skill, passage, prompt, choices, answer_index, explanation, source, enabled, created_at, difficulty, classified_at, figure';
+  'id, section, skill, passage, prompt, choices, answer_index, explanation, source, enabled, created_at, difficulty, classified_at, figure, difficulty_source';
 
 // The question pool, newest first, filtered, capped at 200 rows.
 export async function listQuestions(
@@ -144,4 +145,77 @@ export async function getPoolCounts(): Promise<PoolCounts> {
     return { total: 0, enabled: 0, disabled: 0, ai: 0, seed: 0, rw: 0, math: 0 };
   }
   return data as unknown as PoolCounts;
+}
+
+// Empirical item statistics for one question — the admin item-analysis surface
+// (design spec §C). Aggregates real student performance across BOTH response
+// tables (test attempts + practice drills) for this question_id:
+//   - n:        total graded responses
+//   - correct:  responses graded correct → p-value = correct / n (when n > 0)
+//   - avgTimeMs: average active-display time over non-null time_ms samples only
+//               (old rows / walked-away tabs contribute null and are excluded)
+//   - openFlags: open sat.question_flags for this question
+//
+// Uses the service-role client — the response tables are RLS select-own
+// (users see only their own rows) and question_flags is policy-less, so an
+// admin item view must bypass RLS. This file already imports createAdminClient
+// (getGeneratorState). The page route is requireAdmin()'d.
+export interface QuestionItemStats {
+  n: number;
+  correct: number;
+  avgTimeMs: number | null;
+  openFlags: number;
+}
+
+export async function getQuestionItemStats(id: string): Promise<QuestionItemStats> {
+  const admin = createAdminClient();
+
+  // Pull the is_correct + time_ms columns from both response tables and fold
+  // in JS — one round trip each, small per-question row counts, and it keeps
+  // the null-only-average and correct-tally logic in one readable place.
+  const [attemptRes, practiceRes, flagsRes] = await Promise.all([
+    admin
+      .schema('sat')
+      .from('attempt_responses')
+      .select('is_correct, time_ms')
+      .eq('question_id', id),
+    admin
+      .schema('sat')
+      .from('practice_responses')
+      .select('is_correct, time_ms')
+      .eq('question_id', id),
+    admin
+      .schema('sat')
+      .from('question_flags')
+      .select('id', { count: 'exact', head: true })
+      .eq('question_id', id)
+      .eq('status', 'open'),
+  ]);
+
+  if (attemptRes.error) console.error('[getQuestionItemStats] attempts failed:', attemptRes.error);
+  if (practiceRes.error) console.error('[getQuestionItemStats] practice failed:', practiceRes.error);
+  if (flagsRes.error) console.error('[getQuestionItemStats] flags failed:', flagsRes.error);
+
+  const rows = [
+    ...((attemptRes.data ?? []) as { is_correct: boolean; time_ms: number | null }[]),
+    ...((practiceRes.data ?? []) as { is_correct: boolean; time_ms: number | null }[]),
+  ];
+
+  let correct = 0;
+  let timeSum = 0;
+  let timeCount = 0;
+  for (const r of rows) {
+    if (r.is_correct) correct++;
+    if (r.time_ms != null) {
+      timeSum += r.time_ms;
+      timeCount++;
+    }
+  }
+
+  return {
+    n: rows.length,
+    correct,
+    avgTimeMs: timeCount > 0 ? Math.round(timeSum / timeCount) : null,
+    openFlags: flagsRes.count ?? 0,
+  };
 }

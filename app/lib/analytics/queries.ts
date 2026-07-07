@@ -36,3 +36,41 @@ export async function getAnalytics(): Promise<AnalyticsView> {
 
   return { summary: summarize(attempts, skills), sections, skills, trend };
 }
+
+// One per-skill/section pacing row from sat.user_pacing(). `responses`/`timed`
+// are counts (PostgREST can serialize bigint as a string — coerced via Number);
+// `avgMs` is the mean active-display time over non-null time_ms samples only.
+export interface PacingRow {
+  skill: string;
+  section: 'rw' | 'math';
+  responses: number;
+  timed: number;
+  avgMs: number;
+}
+
+// Per-skill/section pacing for the signed-in user (design spec §A). Reads the
+// sat.user_pacing() RPC (security INVOKER — RLS confines it to the caller).
+// Rows with no timed samples still come back (timed = 0); the UI filters them.
+export async function getPacing(): Promise<PacingRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.schema('sat').rpc('user_pacing');
+  if (error || !data) {
+    if (error) console.error('[getPacing] user_pacing rpc failed:', error);
+    return [];
+  }
+  const rows = data as {
+    skill: string;
+    section: string;
+    responses: number | string;
+    timed: number | string;
+    avg_ms: number | string | null;
+  }[];
+  return rows.map((r) => ({
+    skill: r.skill,
+    section: r.section === 'math' ? 'math' : 'rw',
+    // bigint counts arrive as strings via PostgREST — coerce with Number().
+    responses: Number(r.responses),
+    timed: Number(r.timed),
+    avgMs: r.avg_ms == null ? 0 : Number(r.avg_ms),
+  }));
+}

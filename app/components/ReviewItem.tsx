@@ -13,6 +13,9 @@ interface ReviewItemProps {
   // Polymorphic: mcq questions hold a number | null; SPR questions hold a
   // string | null. The component branches on question.response_format.
   response: ResponseValue;
+  // Sub-project #15: per-question active-display ms, when captured (attempt
+  // review passes it; post-test review omits it). Display-only — never scoring.
+  timeMs?: number | null;
 }
 
 // NOTE: explanation rendering branches on `question.source`. Seed BANK content
@@ -20,7 +23,7 @@ interface ReviewItemProps {
 // content is rendered as React-escaped text (no HTML). This guard shipped with
 // the AI sub-project (#2) and is relied on by the attempt-review page (#4),
 // which renders snapshotted explanations through this component.
-export function ReviewItem({ question, response }: ReviewItemProps) {
+export function ReviewItem({ question, response, timeMs }: ReviewItemProps) {
   const isSpr = question.response_format === 'spr';
 
   // Skipped: null/undefined (any format) or an empty trimmed string (SPR).
@@ -50,6 +53,11 @@ export function ReviewItem({ question, response }: ReviewItemProps) {
           <span className="inline-block ml-2 rounded-full px-2 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-700">Correct</span>
         ) : (
           <span className="inline-block ml-2 rounded-full px-2 py-0.5 text-xs font-semibold bg-red-100 text-red-700">Incorrect</span>
+        )}
+        {timeMs != null && timeMs > 0 && (
+          <span className="ml-2 text-xs font-normal normal-case tracking-normal text-slate-400">
+            took {Math.round(timeMs / 1000)}s
+          </span>
         )}
       </div>
       {question.passage && (

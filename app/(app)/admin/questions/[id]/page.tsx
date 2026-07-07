@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getQuestion } from '@/app/lib/admin/queries';
+import { getQuestion, getQuestionItemStats } from '@/app/lib/admin/queries';
 import { setQuestionEnabled, setQuestionDifficulty } from '@/app/lib/admin/actions';
 import { LETTERS } from '@/app/lib/test';
 import { FigureView } from '@/app/components/FigureView';
@@ -26,7 +26,12 @@ export default async function AdminQuestionPage({
   const q = await getQuestion(id);
   if (!q) notFound();
 
+  const stats = await getQuestionItemStats(q.id);
   const choices = Array.isArray(q.choices) ? (q.choices as string[]) : [];
+  // Empirical p-value only meaningful once there's a sample.
+  const pValue = stats.n > 0 ? stats.correct / stats.n : null;
+  const avgTimeSec =
+    stats.avgTimeMs != null ? Math.round(stats.avgTimeMs / 1000) : null;
 
   return (
     <main className="mx-auto max-w-3xl p-6">
@@ -42,6 +47,15 @@ export default async function AdminQuestionPage({
         <span className={`rounded-full px-2 py-0.5 font-medium ${DIFFICULTY_BADGE[q.difficulty]}`}>
           {q.difficulty}
         </span>
+        {q.difficulty_source === 'empirical' ? (
+          <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-700">
+            Empirically calibrated
+          </span>
+        ) : (
+          <span className="rounded-full bg-slate-200 px-2 py-0.5 font-medium text-slate-600">
+            Model-labeled
+          </span>
+        )}
         <span className="rounded bg-slate-100 px-1.5 py-0.5">{q.source}</span>
         <span>{q.id}</span>
         {q.enabled ? (
@@ -94,6 +108,50 @@ export default async function AdminQuestionPage({
         <span className="font-semibold text-blue-700">Explanation: </span>
         {q.explanation}
       </div>
+
+      {/* Empirical item statistics (design spec §C) — real student performance
+          across both response tables, plus open flags and the difficulty
+          source. p-value drives the empirical difficulty calibration. */}
+      <section className="mt-6">
+        <h2 className="text-sm font-semibold text-slate-700">Item statistics</h2>
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-lg border border-slate-200 p-3 text-center">
+            <div className="text-2xl font-bold text-slate-900">{stats.n}</div>
+            <div className="text-xs text-slate-500">Responses (sample n)</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 p-3 text-center">
+            <div className="text-2xl font-bold text-slate-900">
+              {pValue != null ? `${Math.round(pValue * 100)}%` : '—'}
+            </div>
+            <div className="text-xs text-slate-500">
+              p-value{stats.n > 0 ? ` (${stats.correct}/${stats.n} correct)` : ''}
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 p-3 text-center">
+            <div className="text-2xl font-bold text-slate-900">
+              {avgTimeSec != null ? `${avgTimeSec}s` : '—'}
+            </div>
+            <div className="text-xs text-slate-500">Avg time</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 p-3 text-center">
+            <div
+              className={`text-2xl font-bold ${
+                stats.openFlags > 0 ? 'text-red-600' : 'text-slate-900'
+              }`}
+            >
+              {stats.openFlags}
+            </div>
+            <div className="text-xs text-slate-500">Open flags</div>
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">
+          Difficulty is{' '}
+          {q.difficulty_source === 'empirical'
+            ? 'empirically calibrated from these responses'
+            : 'model-labeled (calibrates automatically once this item has ≥ 10 graded responses)'}
+          .
+        </p>
+      </section>
 
       <div className="mt-6 flex flex-wrap items-end gap-4">
         <form

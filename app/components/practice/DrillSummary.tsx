@@ -72,6 +72,12 @@ export function DrillSummary({
             <span className="truncate text-sm text-slate-700">
               {truncate(r.question.prompt)}
             </span>
+            {/* Per-question time when captured (Task 4). Display-only. */}
+            {r.timeMs != null && r.timeMs > 0 && (
+              <span className="ml-auto shrink-0 text-xs text-slate-400">
+                {Math.round(r.timeMs / 1000)}s
+              </span>
+            )}
           </li>
         ))}
       </ul>

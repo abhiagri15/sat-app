@@ -66,6 +66,13 @@ export interface GenerationSummary {
   // as plausible distractors) and accepted on re-validation. Counts only
   // saves — failed repairs increment rejectedMultiValid instead.
   repairedMultiValid: number;
+  // Sub-project #15 (calibration): count of questions relabeled by
+  // sat.calibrate_difficulty this run (empirical p-value overrides the model
+  // label once a question has ≥ p_min_n graded responses). -1 on error — the
+  // call is wrapped so a calibration failure never breaks the generation half
+  // of the cron. Only runGeneration (the cron path) calibrates; the top-up
+  // path (generateBatchForSkill) never does.
+  calibrated: number;
 }
 
 // The fine-grained counters a single-target batch produces. These are the
@@ -387,6 +394,26 @@ export async function generateBatchForSkill(
   return summary;
 }
 
+// Run the empirical difficulty calibration once per daily cron. Wrapped so a
+// failure never breaks the cron's generation half — returns -1 on error. Only
+// runGeneration calls this (the cron path); the top-up path never calibrates.
+// It runs on every daily tick regardless of whether generation fired, because
+// relabeling depends on accumulated student responses, not on new questions.
+async function runCalibration(
+  admin: ReturnType<typeof createAdminClient>,
+): Promise<number> {
+  try {
+    const { data, error } = await admin
+      .schema('sat')
+      .rpc('calibrate_difficulty', { p_min_n: 10 });
+    if (error || data == null) throw error ?? new Error('calibrate_difficulty returned null');
+    return Number(data);
+  } catch (e) {
+    console.error('[generate] calibrate_difficulty error', e);
+    return -1;
+  }
+}
+
 export async function runGeneration(): Promise<GenerationSummary> {
   const admin = createAdminClient();
   const summary: GenerationSummary = {
@@ -400,6 +427,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
     rejectedDuplicate: 0,
     rejectedMultiValid: 0,
     repairedMultiValid: 0,
+    calibrated: 0,
   };
 
   // 1. Single-call snapshot — same one the n8n workflow uses. Keeps the two
@@ -412,6 +440,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
   summary.bufferTarget = state.bufferTarget;
   summary.neverServedFloor = state.neverServedFloor;
   if (state.minActiveUserUnseen === null) {
+    summary.calibrated = await runCalibration(admin);
     return summary;
   }
 
@@ -441,6 +470,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
   //    condition failing keeps the run going.
   const bufferHealthy = state.minActiveUserUnseen >= state.bufferTarget;
   if (bufferHealthy && !belowFloor) {
+    summary.calibrated = await runCalibration(admin);
     return summary;
   }
 
@@ -493,5 +523,9 @@ export async function runGeneration(): Promise<GenerationSummary> {
     summary.rejectedMultiValid += batch.rejectedMultiValid;
     summary.repairedMultiValid += batch.repairedMultiValid;
   }
+
+  // 7. Empirical difficulty calibration — after the generation work, on the
+  //    cron path only. Wrapped (returns -1 on error) so it never breaks the run.
+  summary.calibrated = await runCalibration(admin);
   return summary;
 }

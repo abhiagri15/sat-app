@@ -69,6 +69,9 @@ export interface AttemptResponseRow {
   module_index: number | null;
   // Sub-project #15: figure snapshot as presented (jsonb). Null for no figure.
   figure: unknown | null;
+  // Sub-project #15: per-question active-display ms. Null for old rows / untimed.
+  // Display-only — never feeds scoring.
+  time_ms: number | null;
 }
 
 export interface AttemptDetail {
@@ -77,7 +80,7 @@ export interface AttemptDetail {
 }
 
 const RESPONSE_COLUMNS =
-  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct, response_format, entered_value, correct_answer, answer_tolerance, module_index, figure';
+  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct, response_format, entered_value, correct_answer, answer_tolerance, module_index, figure, time_ms';
 
 // One attempt with all its responses, or null if it does not exist / is not
 // the caller's (RLS) / the id is not a valid uuid (a malformed id makes the
