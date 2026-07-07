@@ -1,4 +1,5 @@
 import type { GeneratedQuestion } from './schema';
+import type { SectionKey } from '../questions';
 import { OllamaCloudProvider } from './ollama';
 
 // The minimum a solve call needs to re-derive the answer for either format.
@@ -15,6 +16,30 @@ export type SolveInput =
 export type SolveResult =
   | { responseFormat: 'mcq'; answerIndex: number }
   | { responseFormat: 'spr'; answer: string };
+
+// One evidence line handed to generateGuidance: a single past response of the
+// student's, distilled for the coach prompt. `difficulty` is null when the
+// backing question row is gone (a response can outlive its question), in which
+// case the prompt omits the difficulty tag. `format` mirrors the question's
+// response format so the prompt can phrase mcq vs grid-in mistakes correctly.
+export interface GuidanceEvidenceItem {
+  prompt: string;
+  chosen: string;
+  correct: string;
+  isCorrect: boolean;
+  difficulty: string | null;
+  format: 'mcq' | 'spr';
+}
+
+// Input to generateGuidance: the skill under coaching plus the student's
+// accuracy picture (overall + last-10) and the recent-response evidence.
+export interface GuidanceInput {
+  section: SectionKey;
+  skill: string;
+  accuracyPct: number;
+  last10Pct: number | null;
+  evidence: GuidanceEvidenceItem[];
+}
 
 export interface AIProvider {
   // Generate `count` questions for one (section, skill, difficulty).
@@ -52,6 +77,15 @@ export interface AIProvider {
     answerIndex: number;
     indicesToReplace: number[];
   }): Promise<{ choices: string[] } | null>;
+  // Generate one AI base lesson for a (section, skill) as a single JSON object
+  // matching the `Lesson` shape. Returns `unknown` so zod validation
+  // (`lessonSchema`) stays at the caller — same posture as `generateQuestions`
+  // deferring to `generatedQuestionSchema`.
+  generateLesson(section: SectionKey, skill: string): Promise<unknown>;
+  // Generate a per-student "Coach's update" from their accuracy + recent
+  // response evidence. Returns `unknown`; the caller validates via
+  // `guidanceSchema`.
+  generateGuidance(input: GuidanceInput): Promise<unknown>;
 }
 
 // Provider factory — keyed on SAT_AI_PROVIDER so other providers can be added later.
