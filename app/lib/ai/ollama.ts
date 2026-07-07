@@ -32,6 +32,35 @@ async function chat(content: string): Promise<string> {
   return data.choices?.[0]?.message?.content ?? '';
 }
 
+// Per-skill format directives for the drift-prone R&W skills. Injected into
+// the generation prompt so the model produces the authentic Digital SAT
+// archetype for the skill instead of a superficially-similar question. Skills
+// not listed here are covered by the global RW authenticity rules below.
+const RW_ARCHETYPES: Record<string, string> = {
+  'Rhetorical Synthesis':
+    'FORMAT: the passage MUST begin with "While researching a topic, a student has taken the following notes:" followed by 3-5 short bulleted facts, each on its own line prefixed with "- ". The prompt states a specific goal (e.g. "The student wants to emphasize ..."). The 4 choices are full sentences synthesizing the notes; exactly one accomplishes the stated goal using only information from the notes. Do NOT write abstract "Critic X praised / Critic Y said" stems.',
+  'Transitions':
+    'FORMAT: the passage is 1-3 complete sentences with a single blank "______" where a transition belongs. The 4 choices are transition words/phrases (e.g. "However", "For example", "As a result", "Similarly").',
+  'Boundaries (Punctuation)':
+    'FORMAT: the passage has a single blank "______" at a clause boundary. The 4 choices MUST be the literal punctuation/text to insert (e.g. ";", ", and", ":", " —") — NEVER meta-descriptions like "a semicolon", "a comma", or "no punctuation".',
+  'Words in Context':
+    'FORMAT: a single blank "______". The 4 choices are high-utility academic words of the kind the College Board actually uses (e.g. "undermine", "comprehensive", "novel", "tentative"). Do NOT use obscure or archaic vocabulary (e.g. "circumlocution", "cogency", "perspicacious").',
+  'Command of Evidence (Quantitative)':
+    'FORMAT: the passage briefly describes data (a study, table, or figure summarized in words with specific numbers) and states a claim or hypothesis. The prompt asks which finding would most directly support or weaken the claim. The choices reference the data.',
+  'Cross-Text Connections':
+    'FORMAT: the passage contains two labeled texts ("Text 1" and "Text 2") by different authors on a shared topic. The prompt asks how the two texts relate or how one author would respond to the other.',
+};
+
+// Global authenticity rules appended to every R&W generation prompt. These
+// target the failure modes seen in real attempts: trivial common-sense items,
+// math/logic puzzles dressed as Reading, unfair pronoun items, and references
+// to UI affordances (underlines) the app does not render.
+const RW_AUTHENTICITY_RULES =
+  '- AUTHENTICITY: this must read like a real Digital SAT R&W question. Do NOT write trivial or common-sense items solvable from everyday experience (e.g. inferring a season from falling leaves). For Inferences / Central Ideas / Text Structure and Purpose, the passage must be substantive academic prose (3-6 sentences) and the answer must require reading THAT passage, not outside knowledge.\n' +
+  '- Do NOT disguise arithmetic, probability, or logic puzzles as a Reading question. Quantitative reasoning belongs only in the Math section.\n' +
+  '- For Pronoun Agreement, NEVER make the answer hinge on "their" vs "his or her" — singular "they" is accepted on the Digital SAT. Test genuine number agreement or ambiguous-reference errors instead.\n' +
+  '- NEVER refer to "the underlined sentence", "the underlined portion", or any bold/highlighted text — the app renders no such markup. Quote the relevant text directly in the prompt instead.\n';
+
 // Tolerantly extract a JSON value from a model response (strips ``` fences).
 function extractJson(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -97,7 +126,9 @@ export class OllamaCloudProvider implements AIProvider {
         `- IMPORTANT: in "explanation", NEVER refer to a choice by its letter or number (no "Choice A", "Option B", "choice 3", etc.). The app shuffles choices per test, so any letter/number reference becomes wrong at runtime. Refer to the chosen option as "the correct choice" or by quoting its content; refer to incorrect ones as "the other choices" / "the option that says X".\n` +
         (section === 'rw'
           ? `- "passage" must be a short text giving the context the question needs.\n` +
-            `- If the question requires choosing a word, phrase, verb form, or punctuation mark to INSERT into the passage (sentence completion / cloze), the passage MUST contain exactly one blank marked with six underscores ("______") at the insertion point. Do NOT embed the chosen answer in the passage. For reading-comprehension questions (e.g., main idea, evidence support, transition between sentences as a whole), the passage is a complete text and MUST NOT contain "______".\n`
+            `- If the question requires choosing a word, phrase, verb form, or punctuation mark to INSERT into the passage (sentence completion / cloze), the passage MUST contain exactly one blank marked with six underscores ("______") at the insertion point. Do NOT embed the chosen answer in the passage. For reading-comprehension questions (e.g., main idea, evidence support, transition between sentences as a whole), the passage is a complete text and MUST NOT contain "______".\n` +
+            RW_AUTHENTICITY_RULES +
+            (RW_ARCHETYPES[skill] ? `- ${RW_ARCHETYPES[skill]}\n` : '')
           : `- Omit "passage" entirely unless the problem genuinely needs a setup.\n`) +
         `Example of one valid array element:\n${example}`,
     );
