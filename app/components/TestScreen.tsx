@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { clsx } from 'clsx';
 import type { TestSection, ResponseValue } from '@/app/lib/test';
+import { addInterval, removeIntervalAt, type Interval } from '@/app/lib/highlights';
 import { TopBar } from './TopBar';
 import { QuestionView } from './QuestionView';
 import { QuestionNavigator } from './QuestionNavigator';
@@ -106,6 +107,37 @@ export function TestScreen(props: TestScreenProps) {
   const [eliminated, setEliminated] = useState<Map<string, Set<number>>>(new Map());
 
   const currentEliminated = eliminated.get(question.id);
+
+  // Passage tools (design spec §A). UI-STATE ONLY — never persisted, never in
+  // the payload (the eliminator/marks precedent). `highlighterOn` /
+  // `lineReaderOn` are the two toolbar toggles, shown only when the current
+  // question HAS a passage (gate on `question.passage`, not the section).
+  // `highlights` maps a question id → its highlight intervals, so highlights
+  // survive navigating between questions within the test. Keyed by id (stable
+  // across shuffles), per-session only.
+  const [highlighterOn, setHighlighterOn] = useState(false);
+  const [lineReaderOn, setLineReaderOn] = useState(false);
+  const [highlights, setHighlights] = useState<Map<string, Interval[]>>(new Map());
+
+  const hasPassage = Boolean(question.passage);
+  const currentHighlights = highlights.get(question.id) ?? [];
+
+  function addHighlight(interval: Interval) {
+    const textLength = question.passage?.length ?? 0;
+    setHighlights((prev) => {
+      const next = new Map(prev);
+      next.set(question.id, addInterval(next.get(question.id) ?? [], interval, textLength));
+      return next;
+    });
+  }
+
+  function removeHighlightAt(pos: number) {
+    setHighlights((prev) => {
+      const next = new Map(prev);
+      next.set(question.id, removeIntervalAt(next.get(question.id) ?? [], pos));
+      return next;
+    });
+  }
 
   function toggleEliminate(i: number) {
     setEliminated((prev) => {
@@ -219,6 +251,41 @@ export function TestScreen(props: TestScreenProps) {
                 <span className="line-through">ABC</span>{' '}
                 {eliminatorOn ? 'On' : 'Cross out'}
               </button>
+              {/* Passage tools (design spec §A): Highlighter + Line reader.
+                  Shown ONLY when the current question has a passage (gate on
+                  question.passage, not the section). Per-session UI state. */}
+              {hasPassage && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setHighlighterOn((v) => !v)}
+                    aria-pressed={highlighterOn}
+                    title="Select passage text to highlight it; click a highlight to remove it"
+                    className={clsx(
+                      'rounded-md border px-3 py-1.5 text-sm transition',
+                      highlighterOn
+                        ? 'border-yellow-400 bg-yellow-50 text-yellow-700'
+                        : 'border-slate-300 bg-white text-slate-700 hover:border-yellow-400 hover:bg-yellow-50',
+                    )}
+                  >
+                    ✏️ {highlighterOn ? 'Highlighter on' : 'Highlighter'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLineReaderOn((v) => !v)}
+                    aria-pressed={lineReaderOn}
+                    title="Show a focus band over the passage that follows your pointer"
+                    className={clsx(
+                      'rounded-md border px-3 py-1.5 text-sm transition',
+                      lineReaderOn
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-slate-300 bg-white text-slate-700 hover:border-blue-500 hover:bg-blue-50',
+                    )}
+                  >
+                    ▭ {lineReaderOn ? 'Line reader on' : 'Line reader'}
+                  </button>
+                </>
+              )}
               {isMath && (
                 <>
                   <button
@@ -253,6 +320,12 @@ export function TestScreen(props: TestScreenProps) {
               eliminatorOn={eliminatorOn && isMcq}
               eliminated={currentEliminated}
               onToggleEliminate={toggleEliminate}
+              highlights={currentHighlights}
+              highlighterOn={highlighterOn}
+              onAddHighlight={addHighlight}
+              onRemoveHighlightAt={removeHighlightAt}
+              lineReaderOn={lineReaderOn}
+              onLineReaderClose={() => setLineReaderOn(false)}
             />
             <QuestionNavigator
               section={section}
