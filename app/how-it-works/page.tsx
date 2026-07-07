@@ -26,7 +26,7 @@ export const revalidate = 3600;
 export const metadata = {
   title: 'How it works — SAT Practice',
   description:
-    'Adaptive Digital SAT practice. Every College Board skill, fresh questions, with explanations.',
+    'Adaptive Digital SAT practice. Every College Board skill, fresh questions, targeted drills on your weakest skills, and personalized coaching.',
 };
 
 export default async function HowItWorksPage() {

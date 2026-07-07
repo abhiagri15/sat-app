@@ -18,7 +18,15 @@ const FAQS = [
   },
   {
     q: 'Will I get the same question twice?',
-    a: 'No. We track every question you’ve attempted and skip it the next time around. Per-student no-repeat is enforced server-side.',
+    a: 'Not on tests — we track every question you’ve seen (including in drills) and tests never re-serve them as fresh material. Practice drills are the one deliberate exception: they resurface questions you previously got wrong so you can beat them, then move you onto new material.',
+  },
+  {
+    q: 'What are practice drills and skill lessons?',
+    a: 'The Practice section turns your weakest skills into focus areas. Each skill page has a lesson (strategy, a worked example, common traps), an untimed 10-question drill with instant feedback, and a personal coach’s update. Drills don’t affect your test analytics — tests stay the honest measure.',
+  },
+  {
+    q: 'What is the coach’s update?',
+    a: 'A short, personalized read on where you stand in a skill — written by AI from your actual recent answers (what you chose vs. what was right) and refreshed automatically once you’ve done new work. Only you can see it.',
   },
   {
     q: 'What happens to questions I flag?',

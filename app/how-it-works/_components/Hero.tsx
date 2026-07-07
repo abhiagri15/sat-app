@@ -13,8 +13,9 @@ export function Hero({ stats }: HeroProps) {
         Digital SAT practice, built around how the real test actually works.
       </h1>
       <p className="mt-4 max-w-2xl text-lg text-slate-600">
-        Adaptive modules, every skill the College Board tests, and a fresh
-        question every time.
+        Adaptive modules, every skill the College Board tests, a fresh question
+        every time — plus targeted practice and a personal coach&apos;s update
+        built from your own mistakes.
       </p>
 
       {stats && (
