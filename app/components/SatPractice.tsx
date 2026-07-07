@@ -53,6 +53,9 @@ export default function SatPractice({
           hideModule2Path={hideModule2Path}
           breaksEnabled={s.breaksEnabled}
           setBreaksEnabled={s.setBreaksEnabled}
+          pendingSnapshot={s.pendingSnapshot}
+          onResumeSnapshot={s.resumeSnapshot}
+          onDiscardSnapshot={s.discardSnapshot}
         />
       </>
     );

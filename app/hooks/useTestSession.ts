@@ -23,7 +23,25 @@ import {
   readPendingAttempt,
   clearPendingAttempt,
 } from '@/app/lib/persistence/backup';
+import {
+  serializeSnapshot,
+  writeSnapshot,
+  readSnapshot,
+  clearSnapshot,
+  type InProgressSnapshot,
+  type SnapshotState,
+} from '@/app/lib/persistence/inprogress';
 import { getModule2ThresholdPct } from '@/app/lib/config-actions';
+
+// Max age of an in-progress snapshot the start screen will offer to resume.
+// Older than this and we treat it as absent (and clear it) — a day-old
+// half-finished test is noise, not a save.
+const SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+// Throttle for in-progress snapshot writes: at most one per this interval.
+// The crash-adjacent moments (tab hide / pagehide) bypass this and write
+// immediately.
+const SNAPSHOT_THROTTLE_MS = 2000;
 
 // A v4-ish unique id for correlating a backup with its save_failures rows.
 // crypto.randomUUID needs a secure context; fall back for the rare case it's
@@ -38,6 +56,18 @@ function newAttemptUuid(): string {
 export type Screen = 'start' | 'test' | 'break' | 'results';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
+// A summary of a resumable in-progress test, shown on the start screen. Derived
+// from the persisted snapshot — enough to describe the "Resume your test?" card
+// (length, current section, time remaining, saved-when) without exposing the
+// whole Test.
+export interface SnapshotSummary {
+  testLength: TestLength;
+  sectionName: string;   // the section the student was on
+  remainingSeconds: number; // remaining on the current module (or break)
+  onBreak: boolean;
+  savedAt: number;       // client clock (ms) at save time
+}
 
 // The mandatory between-section break duration (seconds) — matches the real
 // Digital SAT's 10-minute break between Reading & Writing and Math.
@@ -105,6 +135,13 @@ export interface TestSession {
   // session (e.g. the tab closed before the save completed).
   resaveStatus: SaveStatus;
   sessionCompletions: number; // tests submitted this browser session
+  // Mid-test crash recovery (spec §B). A resumable in-progress snapshot found
+  // on the start screen (null when none / stale / corrupt). resumeSnapshot()
+  // rehydrates the hook exactly as saved and enters 'test' (or 'break');
+  // discardSnapshot() clears it.
+  pendingSnapshot: SnapshotSummary | null;
+  resumeSnapshot: () => void;
+  discardSnapshot: () => void;
   // actions
   start: () => void;
   // Records the user's answer for the current question. number for mcq
@@ -164,6 +201,21 @@ export function useTestSession(initialName = ''): TestSession {
   // in-test error overlay's manual Retry can replay it without recomputing the
   // routing decision. Set before the draw; cleared on success.
   const module2ParamsRef = useRef<{ secIdx: number; key: SectionKey; path: 'easier' | 'harder' } | null>(null);
+
+  // Mid-test crash recovery (spec §B). The resumable snapshot summary shown on
+  // the start screen (found once at mount). The full snapshot is stashed in a
+  // ref so resumeSnapshot() can rehydrate without re-reading localStorage.
+  const [pendingSnapshot, setPendingSnapshot] = useState<SnapshotSummary | null>(null);
+  const pendingSnapshotRef = useRef<InProgressSnapshot | null>(null);
+  // Single-fire guard for the mount restore check (Strict-Mode double-invoke).
+  const restoreCheckedRef = useRef(false);
+  // Last snapshot write time (ms) for the ≤1-per-2s throttle. -Infinity so the
+  // first write always fires.
+  const lastSnapshotAtRef = useRef(-Infinity);
+  // While true, the snapshot write effect is suppressed. Set during resume so a
+  // rehydrated test doesn't immediately re-serialize before it has settled; the
+  // effect clears it on its first pass.
+  const suppressSnapshotRef = useRef(false);
 
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // The break countdown runs on its OWN interval, entirely separate from the
@@ -303,6 +355,99 @@ export function useTestSession(initialName = ''): TestSession {
     setModuleReview(false);
   }, [secIdx, modIdx, screen]);
 
+  // --- Mid-test crash recovery: write points (spec §B) -----------------------
+  // Build the SnapshotState from live state. Break semantics: a mid-break
+  // snapshot stores the PRE-advance secIdx (the just-finished R&W index) —
+  // resumeFromBreak() does the +1 advance itself, so storing the post-advance
+  // index would double-advance on resume. The break is entered BEFORE secIdx
+  // advances, so `secIdx` is already the pre-advance index while screen ===
+  // 'break' — we store it as-is. `marked` is serialized as an array (from the
+  // Set). `moduleReview` is deliberately not captured (restore lands on the
+  // question view). Returns null when there's nothing to snapshot.
+  const buildSnapshotState = useCallback((): SnapshotState | null => {
+    if (!test) return null;
+    return {
+      testLength,
+      studentName: test.name,
+      test,
+      responses,
+      timesMs: timesMsRef.current,
+      marked: Array.from(marked),
+      secIdx,
+      modIdx,
+      qIdx,
+      remaining,
+      breaksEnabled,
+      breaksUsed,
+      onBreak: screen === 'break',
+      breakRemaining,
+    };
+  }, [
+    test, testLength, responses, marked, secIdx, modIdx, qIdx, remaining,
+    breaksEnabled, breaksUsed, screen, breakRemaining,
+  ]);
+
+  // Write the snapshot immediately (unthrottled) — used at the crash-adjacent
+  // moments (tab hide / pagehide). Never writes during an in-flight Module-2
+  // draw (`loading`): the module2ParamsRef state isn't serializable and the
+  // pre-submit snapshot already covers it. try/catch lives in writeSnapshot —
+  // a quota error must never break the test.
+  const flushSnapshot = useCallback(() => {
+    if (loading) return;
+    if (screen !== 'test' && screen !== 'break') return;
+    const state = buildSnapshotState();
+    if (!state) return;
+    lastSnapshotAtRef.current = Date.now();
+    writeSnapshot(serializeSnapshot(state, Date.now()));
+  }, [loading, screen, buildSnapshotState]);
+
+  // Throttled snapshot write at the state-commit points. This effect fires on
+  // every committed change to the snapshot-relevant state — answer change,
+  // question/module/section navigation, mark toggle, pause/resume, and break
+  // entry — which is exactly the spec's write-point list, without touching the
+  // individual state mutators (submitModule / setAnswer / etc. stay byte-clean).
+  // At most one write per SNAPSHOT_THROTTLE_MS; the unthrottled hide/pagehide
+  // handler covers the moments in between. Suppressed for the pass right after
+  // a resume so a rehydrated test doesn't re-serialize before settling. No
+  // write during an in-flight draw (`loading`) — spec §B.
+  useEffect(() => {
+    if (screen !== 'test' && screen !== 'break') return;
+    if (suppressSnapshotRef.current) {
+      suppressSnapshotRef.current = false;
+      return;
+    }
+    if (loading) return;
+    const now = Date.now();
+    if (now - lastSnapshotAtRef.current < SNAPSHOT_THROTTLE_MS) return;
+    const state = buildSnapshotState();
+    if (!state) return;
+    lastSnapshotAtRef.current = now;
+    writeSnapshot(serializeSnapshot(state, now));
+  }, [
+    screen, loading, buildSnapshotState,
+    // Explicit deps so a change to any snapshot-relevant field re-runs the
+    // throttle check (buildSnapshotState already closes over these, but listing
+    // them makes the write points legible and satisfies exhaustive-deps).
+    responses, marked, secIdx, modIdx, qIdx, paused, remaining, breakRemaining,
+  ]);
+
+  // Unthrottled snapshot flush on the crash-adjacent browser signals: the tab
+  // being hidden (visibilitychange → hidden) and pagehide. These are the exact
+  // moments a mobile OS or a closing tab is most likely to freeze/kill the page
+  // before a throttled write would have fired.
+  useEffect(() => {
+    const onHide = () => flushSnapshot();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushSnapshot();
+    };
+    window.addEventListener('pagehide', onHide);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', onHide);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [flushSnapshot]);
+
   // Runs the save through the retry policy. Retries transient failures (network
   // blip, serverless cold-start, brief Supabase hiccup) with backoff; stops
   // immediately on terminal failures (invalid payload, daily limit, no session).
@@ -361,6 +506,89 @@ export function useTestSession(initialName = ''): TestSession {
     void runSave(pend.payload, pend.attemptUuid);
   }, [runSave]);
 
+  // --- Mid-test crash recovery: restore check (spec §B) ----------------------
+  // On first mount, look for an in-progress snapshot from a crashed/closed
+  // session. This effect is placed BEFORE the resave-on-mount effect (source
+  // order = run order) on purpose: a restored in-progress test must be
+  // considered before a leftover finished-attempt backup, so the two never
+  // collide (they can't coexist for the same test — finish() clears the
+  // snapshot before writing the pending backup). Version mismatch / parse
+  // failure / >12h stale → treat as absent and clear. Single-fire ref keeps
+  // Strict Mode's double-invoke from double-reading. This does NOT auto-resume:
+  // it surfaces a summary and waits for the user's Resume / Discard.
+  useEffect(() => {
+    if (restoreCheckedRef.current) return;
+    restoreCheckedRef.current = true;
+    const snap = readSnapshot();
+    if (!snap) return;
+    if (Date.now() - snap.savedAt > SNAPSHOT_MAX_AGE_MS) {
+      clearSnapshot();
+      return;
+    }
+    pendingSnapshotRef.current = snap;
+    const sec = snap.test.sections[snap.secIdx];
+    const remainingSeconds = snap.onBreak
+      ? snap.breakRemaining
+      : (snap.remaining[snap.secIdx]?.[snap.modIdx] ?? 0);
+    setPendingSnapshot({
+      testLength: snap.testLength,
+      sectionName: sec?.name ?? '',
+      remainingSeconds,
+      onBreak: snap.onBreak,
+      savedAt: snap.savedAt,
+    });
+    // Run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Resume a saved in-progress test. Rehydrates ALL hook state exactly as saved
+  // — including the REFS (timesMsRef.current from the snapshot; activeQuestionRef
+  // = null, the start() precedent) — then sets `screen` LAST so the timer
+  // effects can't tick before the state is in place. moduleReview stays false
+  // (restore lands on the question view). Timers resume from the saved
+  // `remaining`; wall-clock while the tab was closed is NOT deducted (practice-
+  // pragmatic). React auto-batches these setState calls (they run inside this
+  // event handler) into a single render. suppressSnapshotRef stops the write
+  // effect from immediately re-serializing the just-restored state.
+  const resumeSnapshot = useCallback(() => {
+    const snap = pendingSnapshotRef.current;
+    if (!snap) return;
+    suppressSnapshotRef.current = true;
+    // Refs first (not rendered — set synchronously before any effect ticks).
+    timesMsRef.current = snap.timesMs;
+    activeQuestionRef.current = null;
+    setTest(snap.test);
+    setName(snap.studentName);
+    setTestLength(snap.testLength);
+    setResponses(snap.responses);
+    setRemaining(snap.remaining);
+    setMarked(new Set(snap.marked));
+    setModuleReview(false);
+    setSecIdx(snap.secIdx);
+    setModIdx(snap.modIdx);
+    setQIdx(snap.qIdx);
+    setBreaksEnabled(snap.breaksEnabled);
+    setBreaksUsed(snap.breaksUsed);
+    setBreakRemaining(snap.breakRemaining);
+    setPaused(false);
+    setShowReview(false);
+    setStartError(null);
+    setModule2Error(null);
+    setPendingSnapshot(null);
+    // Screen LAST — timer/stopwatch effects gate on it, so all state above is
+    // committed in the same batch before they can run.
+    setScreen(snap.onBreak ? 'break' : 'test');
+    // Stable setState setters + refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Discard the saved in-progress test — clear the snapshot and dismiss the card.
+  const discardSnapshot = useCallback(() => {
+    clearSnapshot();
+    pendingSnapshotRef.current = null;
+    setPendingSnapshot(null);
+  }, []);
+
   // On first mount, resave any attempt left behind by a previous session (the
   // tab closed before the save finished, or the save errored and the page was
   // reloaded). Best-effort background recovery — runs once.
@@ -405,6 +633,11 @@ export function useTestSession(initialName = ''): TestSession {
     // accumulator (the display effect's cleanup also fires on the screen
     // change, but committing here first makes the ordering explicit).
     commitStopwatch();
+    // Crash-recovery ordering (spec §B): clear the in-progress snapshot FIRST,
+    // then the results-save effect writes the pending-attempt backup. A crash
+    // between finish and save must leave ONLY the pending-attempt — the two
+    // must never coexist for the same test.
+    clearSnapshot();
     setScreen('results');
   };
 
@@ -502,6 +735,13 @@ export function useTestSession(initialName = ''): TestSession {
     setBreaksEnabled(testLength === 'short' ? false : breaksEnabled);
     setPaused(false);
     setBreaksUsed(false);
+    // Crash-recovery: a fresh start supersedes any leftover snapshot. Clear it
+    // (and the resume card) and reset the throttle so the first write of THIS
+    // test fires immediately.
+    clearSnapshot();
+    pendingSnapshotRef.current = null;
+    setPendingSnapshot(null);
+    lastSnapshotAtRef.current = -Infinity;
     setScreen('test');
   };
 
@@ -727,6 +967,13 @@ export function useTestSession(initialName = ''): TestSession {
     // #16: clear marks + any open review page.
     setMarked(new Set());
     setModuleReview(false);
+    // Crash-recovery: an explicit clear point (spec §B). finish() already
+    // cleared on the way to results, but newTest() is a hard reset — clear the
+    // snapshot + resume card and reset the throttle unconditionally.
+    clearSnapshot();
+    pendingSnapshotRef.current = null;
+    setPendingSnapshot(null);
+    lastSnapshotAtRef.current = -Infinity;
     setScreen('start');
   };
 
@@ -742,6 +989,7 @@ export function useTestSession(initialName = ''): TestSession {
     marked, toggleMarked, moduleReview, openModuleReview, closeModuleReview,
     showReview, toggleReview, loading, saveStatus, saveError, retrySave,
     resaveStatus, sessionCompletions,
+    pendingSnapshot, resumeSnapshot, discardSnapshot,
     start, setAnswer, goToQuestion, submitModule, newTest, results,
   };
 }

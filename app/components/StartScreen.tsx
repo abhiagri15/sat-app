@@ -1,6 +1,8 @@
 'use client';
 
+import { fmtTime } from '@/app/lib/test';
 import type { TestLength } from '@/app/lib/test';
+import type { SnapshotSummary } from '@/app/hooks/useTestSession';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
 import { Label } from '@/app/components/ui/label';
@@ -20,6 +22,20 @@ interface StartScreenProps {
   hideModule2Path: boolean;
   breaksEnabled?: boolean;
   setBreaksEnabled?: (b: boolean) => void;
+  // Mid-test crash recovery (spec §B). When a resumable snapshot exists, the
+  // "Resume your test?" card is shown; null hides it.
+  pendingSnapshot?: SnapshotSummary | null;
+  onResumeSnapshot?: () => void;
+  onDiscardSnapshot?: () => void;
+}
+
+// Human "saved X ago" for the resume card, from a client-clock ms timestamp.
+function savedAgo(savedAt: number): string {
+  const mins = Math.max(0, Math.round((Date.now() - savedAt) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hrs = Math.round(mins / 60);
+  return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
 }
 
 export function StartScreen({
@@ -33,10 +49,39 @@ export function StartScreen({
   hideModule2Path,
   breaksEnabled = false,
   setBreaksEnabled = () => {},
+  pendingSnapshot = null,
+  onResumeSnapshot = () => {},
+  onDiscardSnapshot = () => {},
 }: StartScreenProps) {
   const limitReached = attemptsRemaining <= 0;
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-5 pt-6 pb-16">
+      {pendingSnapshot && (
+        <Card className="mb-4 border-blue-300 bg-blue-50">
+          <CardContent className="pt-6">
+            <p className="text-sm font-semibold text-blue-900">Resume your test?</p>
+            <p className="mt-1 text-sm text-blue-800">
+              We found a {pendingSnapshot.testLength === 'full' ? 'full' : 'quick'} test in
+              progress
+              {pendingSnapshot.sectionName ? ` — ${pendingSnapshot.sectionName}` : ''}
+              {pendingSnapshot.onBreak
+                ? `, on the break with ${fmtTime(pendingSnapshot.remainingSeconds)} left`
+                : `, ${fmtTime(pendingSnapshot.remainingSeconds)} remaining`}
+              . Saved {savedAgo(pendingSnapshot.savedAt)}.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2.5">
+              <Button onClick={onResumeSnapshot}>Resume test</Button>
+              <Button variant="secondary" onClick={onDiscardSnapshot}>
+                Discard
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-blue-700">
+              The timer resumes where it left off — time while the tab was closed isn&rsquo;t
+              counted.
+            </p>
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardContent className="pt-6">
           <span className="inline-block rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 mb-3">
