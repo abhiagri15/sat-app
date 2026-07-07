@@ -7,6 +7,7 @@ import { isSprCorrect } from '@/app/lib/spr';
 import { FlagQuestion } from './FlagQuestion';
 import { FigureView } from './FigureView';
 import { ExplainMistake } from './ExplainMistake';
+import { MissReasonChips } from './MissReasonChips';
 
 interface ReviewItemProps {
   question: Question;
@@ -16,6 +17,13 @@ interface ReviewItemProps {
   // Sub-project #15: per-question active-display ms, when captured (attempt
   // review passes it; post-test review omits it). Display-only — never scoring.
   timeMs?: number | null;
+  // Sub-project #18: miss-reason tagging. The attempt-review page threads the
+  // response row id + origin so the chips can write via tag_miss_reason; the
+  // results-screen usage (in-memory questions, no row id) omits responseId, so
+  // no chips render. missReason seeds the selected chip.
+  responseId?: string;
+  origin?: 'test' | 'practice';
+  missReason?: string | null;
 }
 
 // NOTE: explanation rendering branches on `question.source`. Seed BANK content
@@ -23,7 +31,14 @@ interface ReviewItemProps {
 // content is rendered as React-escaped text (no HTML). This guard shipped with
 // the AI sub-project (#2) and is relied on by the attempt-review page (#4),
 // which renders snapshotted explanations through this component.
-export function ReviewItem({ question, response, timeMs }: ReviewItemProps) {
+export function ReviewItem({
+  question,
+  response,
+  timeMs,
+  responseId,
+  origin = 'test',
+  missReason = null,
+}: ReviewItemProps) {
   const isSpr = question.response_format === 'spr';
 
   // Skipped: null/undefined (any format) or an empty trimmed string (SPR).
@@ -132,22 +147,34 @@ export function ReviewItem({ question, response, timeMs }: ReviewItemProps) {
           by id and falls back to these snapshot fields when the row is gone
           (disabled/deleted) — marking the prompt untrusted in that case. */}
       {!skipped && !isCorrect && (
-        <ExplainMistake
-          questionId={question.id}
-          chosen={typeof response === 'number' ? response : null}
-          entered={typeof response === 'string' ? response : null}
-          responseFormat={question.response_format ?? 'mcq'}
-          snapshot={{
-            prompt: question.prompt,
-            passage: question.passage ?? null,
-            choices: question.choices,
-            answerIndex: question.answerIndex,
-            correctAnswer: question.correct_answer ?? null,
-            responseFormat: question.response_format ?? 'mcq',
-            skill: question.skill,
-            section: question.section,
-          }}
-        />
+        <>
+          <ExplainMistake
+            questionId={question.id}
+            chosen={typeof response === 'number' ? response : null}
+            entered={typeof response === 'string' ? response : null}
+            responseFormat={question.response_format ?? 'mcq'}
+            snapshot={{
+              prompt: question.prompt,
+              passage: question.passage ?? null,
+              choices: question.choices,
+              answerIndex: question.answerIndex,
+              correctAnswer: question.correct_answer ?? null,
+              responseFormat: question.response_format ?? 'mcq',
+              skill: question.skill,
+              section: question.section,
+            }}
+          />
+          {/* Sub-project #18: miss-reason chips only when the caller threaded a
+              response row id (attempt review). The results-screen usage passes
+              none — no chips there (in-memory questions have no row id). */}
+          {responseId && (
+            <MissReasonChips
+              origin={origin}
+              responseId={responseId}
+              initial={missReason}
+            />
+          )}
+        </>
       )}
 
       <FlagQuestion questionId={question.id} />

@@ -89,6 +89,11 @@ export default async function AttemptReviewPage({
                 // entered string. Either is null when skipped.
                 response={row.response_format === 'spr' ? row.entered_value : row.chosen_index}
                 timeMs={row.time_ms}
+                // Sub-project #18: thread the row id + origin so incorrect items
+                // render the miss-reason chips, seeded from the stored tag.
+                responseId={row.id}
+                origin="test"
+                missReason={row.miss_reason}
               />
             ))}
           </section>

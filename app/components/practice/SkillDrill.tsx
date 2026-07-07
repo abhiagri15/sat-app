@@ -71,6 +71,7 @@ export function SkillDrill({ section, skill, autoStart, nextFocus }: SkillDrillP
         correctCount={s.correctCount}
         saveStatus={s.saveStatus}
         saveError={s.saveError}
+        savedSessionId={s.savedSessionId}
         onRestart={s.start}
         onRetrySave={s.retrySave}
         nextFocus={nextFocus}

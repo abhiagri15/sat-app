@@ -36,6 +36,7 @@ export interface PracticeSession {
   results: DrillResult[]; // grows as questions are checked
   saveStatus: SaveStatus;
   saveError: string | null;
+  savedSessionId: string | null; // sat.practice_sessions id, once save succeeds (#18)
   start: () => void; // idle/error/summary → loading → drilling
   select: (i: number) => void; // no-op once checked
   setEntered: (v: string) => void;
@@ -64,6 +65,9 @@ export function usePracticeSession(
   const [results, setResults] = useState<DrillResult[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
+  // The sat.practice_sessions id, set once save_practice succeeds (#18) — the
+  // drill recap uses it to fetch the response ids for miss-reason chips.
+  const [savedSessionId, setSavedSessionId] = useState<string | null>(null);
 
   // Per-drill correlation id, minted once at start() and reused for every
   // retrySave (save_practice is idempotent on it).
@@ -106,6 +110,9 @@ export function usePracticeSession(
     if (res.ok) {
       setSaveStatus('saved');
       setSaveError(null);
+      // Keep the session id so the recap can fetch response ids for the
+      // miss-reason chips (#18). Absent on very old server builds → null.
+      setSavedSessionId(res.sessionId ?? null);
       // Fire-and-forget post-drill targeted top-up (see the Dynamic Practice
       // spec §C). Not awaited, no state — the drill already completed; the
       // route enforces its own threshold + cooldown. keepalive lets it survive
@@ -151,6 +158,7 @@ export function usePracticeSession(
       setResults([]);
       setSaveStatus('idle');
       setSaveError(null);
+      setSavedSessionId(null);
       // Start the stopwatch as the first question is displayed.
       questionStartedAtRef.current = Date.now();
       setPhase('drilling');
@@ -266,6 +274,7 @@ export function usePracticeSession(
     results,
     saveStatus,
     saveError,
+    savedSessionId,
     start,
     select,
     setEntered,

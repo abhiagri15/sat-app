@@ -72,6 +72,9 @@ export interface AttemptResponseRow {
   // Sub-project #15: per-question active-display ms. Null for old rows / untimed.
   // Display-only — never feeds scoring.
   time_ms: number | null;
+  // Sub-project #18: the student's own read of why they missed. Null for old
+  // rows / untagged / correct rows. One of the MISS_REASONS values.
+  miss_reason: string | null;
 }
 
 export interface AttemptDetail {
@@ -80,7 +83,7 @@ export interface AttemptDetail {
 }
 
 const RESPONSE_COLUMNS =
-  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct, response_format, entered_value, correct_answer, answer_tolerance, module_index, figure, time_ms';
+  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct, response_format, entered_value, correct_answer, answer_tolerance, module_index, figure, time_ms, miss_reason';
 
 // One attempt with all its responses, or null if it does not exist / is not
 // the caller's (RLS) / the id is not a valid uuid (a malformed id makes the
