@@ -8,6 +8,7 @@
 //      for every kind fixture — the solver reads this text, not the SVG.
 // Run: pnpm dlx tsx scripts/check-figures.ts
 import { figureSchema, describeFigure, type Figure } from '../app/lib/ai/figure-schema';
+import { extractJson } from '../app/lib/ai/ollama';
 
 let count = 0;
 function assert(cond: boolean, msg: string): void {
@@ -143,5 +144,42 @@ for (const [kind, fixture] of Object.entries(fixtures)) {
   assert(first.length > 0, `describeFigure(${kind}) returns non-empty text`);
   assert(first === second, `describeFigure(${kind}) is deterministic (two calls strict-equal)`);
 }
+
+// --- extractJson prose-recovery (the DeepSeek preamble-leak fix) -------------
+// Strict parse first; on failure ONE slice-to-brackets recovery pass (array
+// shape, then object shape); recovered values still face the zod gates.
+function throws(fn: () => unknown): boolean {
+  try {
+    fn();
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+assert(
+  JSON.stringify(extractJson('[1, 2, 3]')) === '[1,2,3]',
+  'extractJson: clean JSON parses strictly',
+);
+assert(
+  JSON.stringify(extractJson('```json\n{"a": 1}\n```')) === '{"a":1}',
+  'extractJson: fenced JSON parses',
+);
+assert(
+  JSON.stringify(extractJson('I will output:\n[{"a": 1}]')) === '[{"a":1}]',
+  'extractJson: recovers array behind a prose preamble',
+);
+assert(
+  JSON.stringify(extractJson('{"a": 1}\n\nHope that helps!')) === '{"a":1}',
+  'extractJson: recovers object with trailing prose',
+);
+assert(
+  throws(() => extractJson('no json here at all')),
+  'extractJson: pure prose still throws',
+);
+assert(
+  throws(() => extractJson('echoing {"broken": examples then nothing valid]')),
+  'extractJson: unrecoverable bracket noise still throws',
+);
 
 console.log(`\ncheck-figures: ${count} assertions passed`);

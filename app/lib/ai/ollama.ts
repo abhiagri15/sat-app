@@ -89,12 +89,37 @@ const FIGURE_INSTRUCTIONS =
   `- CRITICAL: the "prompt" (and "passage" if present) MUST independently restate every key value the student needs. The figure is a VISUAL AID, not the sole data source — a student who cannot see the figure must still be able to answer from the text alone.\n`;
 
 // Tolerantly extract a JSON value from a model response (strips ``` fences).
-function extractJson(text: string): unknown {
+// Exported for the check-figures assertion battery.
+//
+// After the strict parse fails, one recovery pass slices from the first
+// '['/'{' to the last ']'/'}' and retries (array shape first — batch outputs
+// are arrays; lesson/guidance/explain outputs are objects). This is the n8n
+// Parse Candidates precedent and matches the recovery findValidChoices /
+// repairMultiValid already do: DeepSeek sometimes wraps its JSON in prose
+// ("I'll output: [...]"), which zeroed every figure batch under strict-only
+// parsing. Every recovered value still runs the full downstream zod gates
+// (generatedQuestionSchema / figureSchema / lessonSchema / ...), so garbage
+// still rejects — this widens extraction, never validation.
+export function extractJson(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const raw = (fenced ? fenced[1] : text).trim();
   try {
     return JSON.parse(raw);
   } catch {
+    for (const [open, close] of [
+      ['[', ']'],
+      ['{', '}'],
+    ] as const) {
+      const start = raw.indexOf(open);
+      const end = raw.lastIndexOf(close);
+      if (start !== -1 && end > start) {
+        try {
+          return JSON.parse(raw.slice(start, end + 1));
+        } catch {
+          // fall through to the next shape / the error below
+        }
+      }
+    }
     throw new Error(`extractJson: invalid JSON from model: ${raw.slice(0, 120)}`);
   }
 }
