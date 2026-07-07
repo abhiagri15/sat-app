@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { getQuestion } from '@/app/lib/admin/queries';
 import { setQuestionEnabled, setQuestionDifficulty } from '@/app/lib/admin/actions';
 import { LETTERS } from '@/app/lib/test';
+import { FigureView } from '@/app/components/FigureView';
 
 const DIFFICULTY_BADGE: Record<'easy' | 'medium' | 'hard', string> = {
   easy:   'bg-blue-100 text-blue-700',
@@ -62,6 +63,12 @@ export default async function AdminQuestionPage({
       {q.passage && (
         <div className="mt-4 whitespace-pre-wrap rounded-md border-l-4 border-blue-500 bg-slate-50 p-4 text-sm">
           {q.passage}
+        </div>
+      )}
+
+      {q.figure != null && (
+        <div className="mt-4">
+          <FigureView figure={q.figure} />
         </div>
       )}
 

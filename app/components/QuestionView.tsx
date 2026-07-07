@@ -7,6 +7,7 @@ import type { ResponseValue } from '@/app/lib/test';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
 import { SprInput } from './SprInput';
+import { FigureView } from './FigureView';
 
 interface QuestionViewProps {
   section: { name: string };
@@ -39,6 +40,11 @@ export function QuestionView({
         {question.passage && (
           <div className="bg-slate-50 border-l-4 border-blue-500 rounded-md p-4 mb-4 whitespace-pre-wrap">
             {question.passage}
+          </div>
+        )}
+        {question.figure && (
+          <div className="mb-4">
+            <FigureView figure={question.figure} />
           </div>
         )}
         <div className="text-lg font-semibold mb-4">{question.prompt}</div>

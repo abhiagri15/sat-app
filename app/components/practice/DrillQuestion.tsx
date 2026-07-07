@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import type { Question } from '@/app/lib/questions';
 import { SprInput } from '@/app/components/SprInput';
 import { FlagQuestion } from '@/app/components/FlagQuestion';
+import { FigureView } from '@/app/components/FigureView';
 
 interface DrillQuestionProps {
   question: Question;
@@ -85,6 +86,12 @@ export function DrillQuestion({
       {question.passage && (
         <div className="mt-3 mb-4 whitespace-pre-line rounded-md border-l-4 border-blue-500 bg-slate-50 p-4 text-sm text-slate-700">
           {question.passage}
+        </div>
+      )}
+
+      {question.figure && (
+        <div className="mt-3">
+          <FigureView figure={question.figure} />
         </div>
       )}
 

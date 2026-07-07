@@ -1,3 +1,5 @@
+import { figureSchema, type Figure } from '@/app/lib/ai/figure-schema';
+
 // SAT seed question bank. Each entry's `id` is immutable once committed:
 // see Foundation spec Section 5 Step 4 sub-step 3 for the ordering rule.
 //
@@ -23,11 +25,12 @@ export interface Question {
   correct_answer?: string | null;    // SPR canonical answer (null for mcq)
   answer_tolerance?: number | null;  // SPR float tolerance (null = exact)
   // Structured math-figure spec (validated jsonb on sat.questions.figure).
-  // Typed `unknown | null` here on purpose — sub-project #15 Task 4 threads the
-  // snapshot end-to-end while Task 5 NARROWS this to `Figure | null` and wires
-  // generation/rendering. Do not import figure-schema here (Task 4 owns the
-  // passthrough, not the type). Null when a question carries no figure.
-  figure?: unknown | null;
+  // NARROWED (sub-project #15 Task 5) from `unknown | null` to `Figure | null`
+  // — the discriminated-union type from figure-schema. rowToQuestion validates
+  // the raw jsonb through figureSchema before it becomes a Figure; a malformed
+  // row degrades to null (FigureView also safeParses defensively at render).
+  // Null when a question carries no figure.
+  figure?: Figure | null;
 }
 
 export const BANK: Question[] = [
@@ -609,8 +612,19 @@ export function rowToQuestion(row: {
     response_format: row.response_format === 'spr' ? 'spr' : 'mcq',
     correct_answer: row.correct_answer ?? null,
     answer_tolerance: row.answer_tolerance ?? null,
-    // Figure snapshot (jsonb, may be null). Task 5 narrows the type + validates;
-    // Task 4 just carries the raw value through null-safe.
-    figure: row.figure ?? null,
+    // Figure snapshot (jsonb, may be null). Task 5 NARROWS the type — the raw
+    // jsonb is validated through figureSchema (the safety wall); a malformed or
+    // absent value degrades to null so a bad row never crashes a render.
+    figure: parseFigure(row.figure),
   };
+}
+
+// Validate a raw jsonb figure value from a sat.questions row into a `Figure`,
+// or null when absent/malformed. The schema is the safety wall — reject, never
+// repair (FigureView also safeParses defensively, but narrowing here keeps the
+// Question type honest for every consumer).
+function parseFigure(raw: unknown): Figure | null {
+  if (raw == null) return null;
+  const parsed = figureSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }

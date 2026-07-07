@@ -4,11 +4,18 @@ import { OllamaCloudProvider } from './ollama';
 
 // The minimum a solve call needs to re-derive the answer for either format.
 // For mcq we need choices; for spr we ignore choices (always empty there).
+//
+// Sub-project #15 (figures): both members carry an OPTIONAL `figureText` — the
+// deterministic plain-text serialization of the item's figure (describeFigure).
+// When present, every solve-side prompt appends `Figure: ${figureText}` so the
+// re-solver sees exactly what the student sees (the model never sees the SVG).
 export type SolveInput =
-  | Pick<Extract<GeneratedQuestion, { responseFormat: 'mcq' }>,
+  | (Pick<Extract<GeneratedQuestion, { responseFormat: 'mcq' }>,
       'responseFormat' | 'section' | 'skill' | 'passage' | 'prompt' | 'choices'>
-  | Pick<Extract<GeneratedQuestion, { responseFormat: 'spr' }>,
-      'responseFormat' | 'section' | 'skill' | 'prompt'>;
+      & { figureText?: string })
+  | (Pick<Extract<GeneratedQuestion, { responseFormat: 'spr' }>,
+      'responseFormat' | 'section' | 'skill' | 'prompt'>
+      & { figureText?: string });
 
 // Solver result is polymorphic across response formats. For mcq the model
 // returns a 0-based choice index; for spr it returns a typed numeric string
@@ -46,12 +53,20 @@ export interface AIProvider {
   // Caller decides mcq vs spr via the `useSpr` flag (spr is Math-only).
   // Sub-project #11 added `targetDifficulty` so the thinnest-first picker
   // can request the difficulty cell that's underfilled.
+  //
+  // Sub-project #15 (figures): the OPTIONAL trailing `wantFigure` flag asks the
+  // model to attach a `figure` spec (per the exact JSON shape documented in the
+  // prompt). It is backward-compatible — omitted (default false) means no figure
+  // instructions are added and the prompt is byte-identical to before. Only the
+  // cron/top-up caller sets it, and only for FIGURE_SKILLS math targets on a
+  // coin flip; a schema-invalid figure rejects the candidate (rejectedSchema).
   generateQuestions(
     section: 'rw' | 'math',
     skill: string,
     count: number,
     useSpr: boolean,
     targetDifficulty: 'easy' | 'medium' | 'hard',
+    wantFigure?: boolean,
   ): Promise<GeneratedQuestion[]>;
   // Re-solve a question for the self-verify gate. Branches on responseFormat.
   solve(q: SolveInput): Promise<SolveResult>;
@@ -76,6 +91,8 @@ export interface AIProvider {
     choices: string[];
     answerIndex: number;
     indicesToReplace: number[];
+    // Sub-project #15 (figures): appended as `Figure: ${figureText}` when present.
+    figureText?: string;
   }): Promise<{ choices: string[] } | null>;
   // Generate one AI base lesson for a (section, skill) as a single JSON object
   // matching the `Lesson` shape. Returns `unknown` so zod validation

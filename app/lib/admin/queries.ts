@@ -15,6 +15,7 @@ export interface AdminQuestion {
   created_at: string;
   difficulty: 'easy' | 'medium' | 'hard';      // Sub-project #11
   classified_at: string | null;                // Sub-project #11
+  figure: unknown | null;                       // Sub-project #15: figure spec (jsonb)
 }
 
 export interface PoolCounts {
@@ -34,7 +35,7 @@ export interface QuestionFilters {
 }
 
 const QUESTION_COLUMNS =
-  'id, section, skill, passage, prompt, choices, answer_index, explanation, source, enabled, created_at, difficulty, classified_at';
+  'id, section, skill, passage, prompt, choices, answer_index, explanation, source, enabled, created_at, difficulty, classified_at, figure';
 
 // The question pool, newest first, filtered, capped at 200 rows.
 export async function listQuestions(

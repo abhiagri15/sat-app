@@ -5,6 +5,7 @@ import type { ResponseValue } from '@/app/lib/test';
 import type { Question } from '@/app/lib/questions';
 import { isSprCorrect } from '@/app/lib/spr';
 import { FlagQuestion } from './FlagQuestion';
+import { FigureView } from './FigureView';
 
 interface ReviewItemProps {
   question: Question;
@@ -53,6 +54,13 @@ export function ReviewItem({ question, response }: ReviewItemProps) {
       {question.passage && (
         <div className="bg-slate-50 border-l-4 border-blue-500 rounded-md p-4 mb-4 whitespace-pre-wrap">
           {question.passage}
+        </div>
+      )}
+      {/* Review renders the figure snapshot as presented (carried on the
+          reconstructed Question via its `figure` field) — never a re-join. */}
+      {question.figure && (
+        <div className="mb-4">
+          <FigureView figure={question.figure} />
         </div>
       )}
       <div className="text-lg font-semibold mb-4">{question.prompt}</div>

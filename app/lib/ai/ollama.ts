@@ -62,6 +62,26 @@ const RW_AUTHENTICITY_RULES =
   '- For Pronoun Agreement, NEVER make the answer hinge on "their" vs "his or her" — singular "they" is accepted on the Digital SAT. Test genuine number agreement or ambiguous-reference errors instead.\n' +
   '- NEVER refer to "the underlined sentence", "the underlined portion", or any bold/highlighted text — the app renders no such markup. Quote the relevant text directly in the prompt instead.\n';
 
+// Sub-project #15 (figures): the exact figure-spec JSON shape, documented inline
+// for the generation prompt so the model emits a `figure` that `figureSchema`
+// accepts (it is the safety wall — a malformed figure rejects the whole
+// candidate). Bounds mirror app/lib/ai/figure-schema.ts EXACTLY. The model
+// never emits SVG/HTML — only one of these structured shapes; the app renders
+// it. The final rule is load-bearing: the prompt text must independently
+// restate every given value so the item is fully solvable from text alone (the
+// figure is an aid, not the sole data source, and FigureView renders nothing on
+// a degenerate spec).
+const FIGURE_INSTRUCTIONS =
+  `- FIGURE: include a "figure" field — a structured spec the app renders as a graph/table (you NEVER emit SVG, HTML, or an image; only this JSON object). It must be ONE of these exact shapes (all strings ≤ 80 chars, all numbers finite):\n` +
+  `    table:       {"kind":"table","columns":[2-5 strings],"rows":[1-8 arrays, each EXACTLY columns.length strings]}\n` +
+  `    bar-chart:   {"kind":"bar-chart","xLabel":str,"yLabel":str,"bars":[2-8 of {"label":str,"value":number}]}\n` +
+  `    line-graph:  {"kind":"line-graph","xLabel":str,"yLabel":str,"points":[2-12 of {"x":number,"y":number}]}\n` +
+  `    scatterplot: {"kind":"scatterplot","xLabel":str,"yLabel":str,"points":[4-20 of {"x":number,"y":number}],"trendLine":{"slope":number,"intercept":number} (OPTIONAL)}\n` +
+  `    triangle:    {"kind":"triangle","vertices":[3 label strings],"sides":{"ab":str,"bc":str,"ca":str} (OPTIONAL, any subset),"angles":{"a":str,"b":str,"c":str} (OPTIONAL, any subset),"rightAngleAt":"a"|"b"|"c" (OPTIONAL)} — side/angle labels are shown AS GIVEN text (e.g. "12", "30°"); do NOT rely on the app to solve the geometry.\n` +
+  `    circle:      {"kind":"circle","radiusLabel":str (OPTIONAL),"centerLabel":str (OPTIONAL),"sectorAngleDeg":number 0-360 (OPTIONAL)}\n` +
+  `- Pick the ONE figure kind that best fits the question. Do NOT invent other kinds or fields — extra/missing fields cause the whole question to be rejected.\n` +
+  `- CRITICAL: the "prompt" (and "passage" if present) MUST independently restate every key value the student needs. The figure is a VISUAL AID, not the sole data source — a student who cannot see the figure must still be able to answer from the text alone.\n`;
+
 // Tolerantly extract a JSON value from a model response (strips ``` fences).
 function extractJson(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -80,14 +100,19 @@ export class OllamaCloudProvider implements AIProvider {
     count: number,
     useSpr: boolean,
     targetDifficulty: 'easy' | 'medium' | 'hard',
+    wantFigure = false,
   ): Promise<GeneratedQuestion[]> {
     // SPR is Math-only by spec; defensively force back to mcq if the caller
     // requested spr for an R&W skill.
     const effectiveSpr = useSpr && section === 'math';
+    // Figures are Math-only (the caller only ever sets wantFigure for
+    // FIGURE_SKILLS math targets); guard defensively so an R&W request never
+    // grows figure instructions.
+    const effectiveFigure = wantFigure && section === 'math';
     if (effectiveSpr) {
-      return this.generateSprBatch(skill, count, targetDifficulty);
+      return this.generateSprBatch(skill, count, targetDifficulty, effectiveFigure);
     }
-    return this.generateMcqBatch(section, skill, count, targetDifficulty);
+    return this.generateMcqBatch(section, skill, count, targetDifficulty, effectiveFigure);
   }
 
   // Existing multiple-choice generation. Returns an array of `responseFormat:
@@ -98,8 +123,14 @@ export class OllamaCloudProvider implements AIProvider {
     skill: string,
     count: number,
     targetDifficulty: 'easy' | 'medium' | 'hard',
+    wantFigure = false,
   ): Promise<GeneratedQuestion[]> {
     const sectionName = section === 'rw' ? 'Reading & Writing' : 'Math';
+    // Figure example (math-only). The prompt still restates the values so the
+    // item is solvable from text alone — modeling the "figure is an aid" rule.
+    const figureExample = wantFigure
+      ? `,"figure":{"kind":"scatterplot","xLabel":"Study hours","yLabel":"Score","points":[{"x":1,"y":60},{"x":2,"y":68},{"x":3,"y":75},{"x":4,"y":80},{"x":5,"y":88}],"trendLine":{"slope":6.8,"intercept":54}}`
+      : '';
     const example =
       section === 'rw'
         ? `{"responseFormat":"mcq","section":"rw","skill":"${skill}","difficulty":"${targetDifficulty}","passage":"Although critics initially called the design ______, recent reviews praise its bold use of color.",` +
@@ -107,13 +138,14 @@ export class OllamaCloudProvider implements AIProvider {
           `"answerIndex":0,"explanation":"The contrast \\"Although ... recent reviews praise\\" signals the initial reaction was negative; uninspired fits."}`
         : `{"responseFormat":"mcq","section":"math","skill":"${skill}","difficulty":"${targetDifficulty}",` +
           `"prompt":"If 3x + 6 = 18, what is the value of x?","choices":["2","4","6","8"],` +
-          `"answerIndex":1,"explanation":"Subtract 6 from both sides, then divide by 3: x = 4."}`;
+          `"answerIndex":1,"explanation":"Subtract 6 from both sides, then divide by 3: x = 4."${figureExample}}`;
     const content = await chat(
       `Generate ${count} original Digital SAT ${sectionName} multiple-choice practice questions ` +
         `for the skill "${skill}" at "${targetDifficulty}" difficulty.\n` +
         `Return ONLY a JSON array of objects — no prose, no markdown fences.\n` +
         `Each object must have exactly these keys: responseFormat, section, skill, difficulty, ` +
-        `${section === 'rw' ? 'passage, ' : ''}prompt, choices, answerIndex, explanation.\n` +
+        `${section === 'rw' ? 'passage, ' : ''}prompt, choices, answerIndex, explanation` +
+        `${wantFigure ? ', figure' : ''}.\n` +
         `- "responseFormat" must be "mcq".\n` +
         `- "section" must be "${section}"; "skill" must be "${skill}".\n` +
         `- "difficulty" must be exactly "${targetDifficulty}". Calibrate:\n` +
@@ -131,6 +163,7 @@ export class OllamaCloudProvider implements AIProvider {
             RW_AUTHENTICITY_RULES +
             (RW_ARCHETYPES[skill] ? `- ${RW_ARCHETYPES[skill]}\n` : '')
           : `- Omit "passage" entirely unless the problem genuinely needs a setup.\n`) +
+        (wantFigure ? FIGURE_INSTRUCTIONS : '') +
         `Example of one valid array element:\n${example}`,
     );
     const parsed = extractJson(content);
@@ -155,17 +188,23 @@ export class OllamaCloudProvider implements AIProvider {
     skill: string,
     count: number,
     targetDifficulty: 'easy' | 'medium' | 'hard',
+    wantFigure = false,
   ): Promise<GeneratedQuestion[]> {
+    // Figure example (a table works well for a data-analysis grid-in). The
+    // prompt still restates the values so the item is solvable from text alone.
+    const figureExample = wantFigure
+      ? `,"figure":{"kind":"table","columns":["Day","Sales"],"rows":[["Mon","12"],["Tue","15"],["Wed","9"]]}`
+      : '';
     const example =
       `{"responseFormat":"spr","section":"math","skill":"${skill}","difficulty":"${targetDifficulty}",` +
       `"prompt":"If 2x + 5 = 17, what is the value of x?",` +
-      `"correctAnswer":"6","explanation":"Subtract 5: 2x = 12. Divide by 2: x = 6."}`;
+      `"correctAnswer":"6","explanation":"Subtract 5: 2x = 12. Divide by 2: x = 6."${figureExample}}`;
     const content = await chat(
       `Generate ${count} original Digital SAT Math student-produced-response (SPR / grid-in) ` +
         `practice questions for the skill "${skill}" at "${targetDifficulty}" difficulty.\n` +
         `Return ONLY a JSON array of objects — no prose, no markdown fences.\n` +
         `Each object must have exactly these keys: responseFormat, section, skill, difficulty, prompt, ` +
-        `correctAnswer, explanation. Optionally include answerTolerance.\n` +
+        `correctAnswer, explanation. Optionally include answerTolerance${wantFigure ? ' and figure' : ''}.\n` +
         `- "responseFormat" must be "spr".\n` +
         `- "section" must be "math"; "skill" must be "${skill}".\n` +
         `- "difficulty" must be exactly "${targetDifficulty}". Calibrate:\n` +
@@ -182,6 +221,7 @@ export class OllamaCloudProvider implements AIProvider {
         `- "explanation" must be PLAIN TEXT (no HTML, no markdown). Show the steps that lead to ` +
         `"correctAnswer". Do not refer to multiple-choice options — SPR questions have none.\n` +
         `- Do NOT include "choices" or "answerIndex" fields. SPR questions have no choices.\n` +
+        (wantFigure ? FIGURE_INSTRUCTIONS : '') +
         `Example of one valid array element:\n${example}`,
     );
     const parsed = extractJson(content);
@@ -198,13 +238,18 @@ export class OllamaCloudProvider implements AIProvider {
   }
 
   async solve(q: SolveInput): Promise<SolveResult> {
+    // Sub-project #15 (figures): when the item carries a figure, the solver
+    // must see it — as deterministic plain text (describeFigure), never SVG.
+    const figureLine = q.figureText ? `Figure: ${q.figureText}\n` : '';
+
     if (q.responseFormat === 'spr') {
       const content = await chat(
         `Solve this Digital SAT Math question. Respond with ONLY the numeric answer ` +
           `as a bare string — an integer, decimal, or simple fraction. Examples of ` +
           `valid answers: "7", "3.14", "3/4", "-0.5". Do not include units, words, ` +
           `or punctuation.\n` +
-          `Question: ${q.prompt}`,
+          `Question: ${q.prompt}\n` +
+          figureLine,
       );
       // Take the first contiguous token that looks like a number or fraction.
       const m = content.trim().match(/-?\d+(?:\.\d+)?(?:\/\d+)?|\.\d+/);
@@ -216,6 +261,7 @@ export class OllamaCloudProvider implements AIProvider {
       `Solve this Digital SAT question. Respond with ONLY the 0-based index ` +
         `(0, 1, 2, or 3) of the correct choice — a single digit, nothing else.\n` +
         (q.passage ? `Passage: ${q.passage}\n` : '') +
+        figureLine +
         `Question: ${q.prompt}\n` +
         q.choices.map((c, i) => `${i}: ${c}`).join('\n'),
     );
@@ -244,6 +290,8 @@ export class OllamaCloudProvider implements AIProvider {
         `valid choice, or [0,2] if two are valid. No prose, no markdown, ` +
         `no other text.\n\n` +
         (q.passage ? `Passage: ${q.passage}\n` : '') +
+        // Sub-project #15 (figures): the re-solver must see the figure too.
+        (q.figureText ? `Figure: ${q.figureText}\n` : '') +
         `Question: ${q.prompt}\n` +
         q.choices.map((c, i) => `${i}: ${c}`).join('\n'),
     );
@@ -282,6 +330,8 @@ export class OllamaCloudProvider implements AIProvider {
     choices: string[];
     answerIndex: number;
     indicesToReplace: number[];
+    // Sub-project #15 (figures): appended as `Figure: ${figureText}` when present.
+    figureText?: string;
   }): Promise<{ choices: string[] } | null> {
     const correctText = input.choices[input.answerIndex];
     const toReplaceList = input.indicesToReplace
@@ -308,6 +358,8 @@ export class OllamaCloudProvider implements AIProvider {
         `- The replacement distractors must NOT themselves be valid solutions.\n` +
         `- No multi-step changes — replacement values should look numerically close to the correct answer.\n\n` +
         (input.passage ? `Passage: ${input.passage}\n\n` : '') +
+        // Sub-project #15 (figures): the repair model must see the figure too.
+        (input.figureText ? `Figure: ${input.figureText}\n\n` : '') +
         `Question: ${input.prompt}\n\n` +
         `Current choices:\n${choicesList}\n\n` +
         `Respond with ONLY a JSON array of exactly 4 strings — the full new ` +

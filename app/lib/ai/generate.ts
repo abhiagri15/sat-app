@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { getProvider } from './provider';
 import { generatedQuestionSchema } from './schema';
+import { describeFigure, type Figure } from './figure-schema';
 import { dedupHash } from './dedup';
 import { SKILLS } from '@/app/lib/questions';
 import { isSprCorrect } from '@/app/lib/spr';
@@ -17,6 +18,28 @@ const PER_SKILL_BATCH = 3;
 // (grid-in) questions rather than multiple choice. Roughly matches the
 // ~25% SPR share on the real Digital SAT Math section.
 const SPR_PROBABILITY = 0.25;
+
+// Sub-project #15 (figures): the Math skills for which a figure-bearing item is
+// authentic on the real Digital SAT (graphs, tables, geometry diagrams). Only
+// these skills ever request a figure, and only Math — R&W stays words-only and
+// non-FIGURE_SKILLS math targets are UNCHANGED (the cron/top-up default path is
+// byte-identical for them). A schema-invalid figure rejects the candidate under
+// rejectedSchema (the zod parse handles it since figureSchema is wired into
+// generatedQuestionSchema).
+const FIGURE_SKILLS: ReadonlySet<string> = new Set([
+  'Scatterplots & Models',
+  'Statistics (Mean)',
+  'Statistics (Spread)',
+  'Geometry (Area)',
+  'Geometry (Triangles)',
+  'Circles',
+  'Volume',
+  'Right Triangle Trigonometry',
+]);
+// Fraction of eligible (FIGURE_SKILLS math) generation runs that request a
+// figure-bearing item. A coin flip per batch, like SPR — the pool trends toward
+// this share over many runs.
+const FIGURE_PROBABILITY = 0.5;
 
 export interface GenerationSummary {
   // The worst-off active student's unseen count at the start of the run
@@ -124,10 +147,17 @@ export async function generateBatchForSkill(
   };
 
   const useSpr = section === 'math' && Math.random() < SPR_PROBABILITY;
+  // Figure coin: only FIGURE_SKILLS math targets are eligible, and only on a
+  // FIGURE_PROBABILITY flip. Every other target passes wantFigure=false, so the
+  // prompt is byte-identical to before for the cron/top-up default path.
+  const wantFigure =
+    section === 'math' &&
+    FIGURE_SKILLS.has(skill) &&
+    Math.random() < FIGURE_PROBABILITY;
   let candidates;
   try {
     candidates = await provider.generateQuestions(
-      section, skill, count, useSpr, difficulty,
+      section, skill, count, useSpr, difficulty, wantFigure,
     );
   } catch (e) {
     console.error('[generate] provider error', section, skill, difficulty, e);
@@ -145,6 +175,13 @@ export async function generateBatchForSkill(
       continue;
     }
 
+    // Sub-project #15 (figures): a validated candidate may carry a figure
+    // (figureSchema is wired into generatedQuestionSchema, so q.figure is a
+    // typed Figure here). Serialize it to deterministic plain text once so
+    // EVERY re-solve — self-verify + both multi-validity passes — sees what the
+    // student sees. undefined when the candidate has no figure.
+    const figureText = q.figure ? describeFigure(q.figure) : undefined;
+
     // Self-verify branches on the discriminator. For mcq the model picks
     // an index and we compare to answerIndex; for spr the model types a
     // numeric answer and we compare with isSprCorrect.
@@ -158,6 +195,7 @@ export async function generateBatchForSkill(
           passage: q.passage,
           prompt: q.prompt,
           choices: q.choices,
+          figureText,
         });
         verified = r.responseFormat === 'mcq' && r.answerIndex === q.answerIndex;
       } else {
@@ -166,6 +204,7 @@ export async function generateBatchForSkill(
           section: q.section,
           skill: q.skill,
           prompt: q.prompt,
+          figureText,
         });
         verified =
           r.responseFormat === 'spr' &&
@@ -194,6 +233,7 @@ export async function generateBatchForSkill(
           passage: q.passage,
           prompt: q.prompt,
           choices: q.choices,
+          figureText,
         });
       } catch (e) {
         console.error('[generate] findValidChoices error', e);
@@ -228,6 +268,7 @@ export async function generateBatchForSkill(
             choices: q.choices,
             answerIndex: q.answerIndex,
             indicesToReplace: toReplace,
+            figureText,
           });
         } catch (e) {
           console.error('[generate] repairMultiValid error', e);
@@ -247,6 +288,7 @@ export async function generateBatchForSkill(
             passage: q.passage,
             prompt: q.prompt,
             choices: repaired.choices,
+            figureText,
           });
         } catch (e) {
           console.error('[generate] re-findValidChoices error', e);
@@ -286,6 +328,10 @@ export async function generateBatchForSkill(
       dedup_hash: string;
       difficulty: 'easy' | 'medium' | 'hard';
       classified_at: string;
+      // Sub-project #15 (figures): the structured figure spec (jsonb) or null.
+      // Validated by figureSchema (via generatedQuestionSchema) before we got
+      // here, so it's a Figure or undefined; coalesce to null for the column.
+      figure: Figure | null;
     } = q.responseFormat === 'mcq'
       ? {
           id: `ai-${randomUUID()}`,
@@ -309,6 +355,7 @@ export async function generateBatchForSkill(
           dedup_hash: dedupHash(q.prompt, repairedChoices ?? q.choices, q.passage),
           difficulty: q.difficulty,
           classified_at: nowIso,
+          figure: q.figure ?? null,
         }
       : {
           id: `ai-${randomUUID()}`,
@@ -326,6 +373,7 @@ export async function generateBatchForSkill(
           dedup_hash: dedupHash(q.prompt, [q.correctAnswer]),
           difficulty: q.difficulty,
           classified_at: nowIso,
+          figure: q.figure ?? null,
         };
 
     const { error } = await admin.schema('sat').from('questions').insert(row);

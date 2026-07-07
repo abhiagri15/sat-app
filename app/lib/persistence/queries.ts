@@ -1,5 +1,6 @@
 import { createClient } from '@/app/lib/supabase/server';
 import type { Question } from '@/app/lib/questions';
+import { figureSchema } from '@/app/lib/ai/figure-schema';
 
 export interface SectionBreakdownEntry {
   name: string;
@@ -66,6 +67,8 @@ export interface AttemptResponseRow {
   answer_tolerance: number | null;
   // Sub-project #11: which module (0 = Module 1, 1 = Module 2). Null for short attempts.
   module_index: number | null;
+  // Sub-project #15: figure snapshot as presented (jsonb). Null for no figure.
+  figure: unknown | null;
 }
 
 export interface AttemptDetail {
@@ -74,7 +77,7 @@ export interface AttemptDetail {
 }
 
 const RESPONSE_COLUMNS =
-  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct, response_format, entered_value, correct_answer, answer_tolerance, module_index';
+  'id, section_key, section_name, position, question_id, skill, source, passage, prompt, choices, answer_index, explanation, chosen_index, is_correct, response_format, entered_value, correct_answer, answer_tolerance, module_index, figure';
 
 // One attempt with all its responses, or null if it does not exist / is not
 // the caller's (RLS) / the id is not a valid uuid (a malformed id makes the
@@ -106,6 +109,8 @@ export async function getAttempt(id: string): Promise<AttemptDetail | null> {
 
 // Reconstructs the Question shape ReviewItem expects from a stored response.
 export function responseToQuestion(row: AttemptResponseRow): Question {
+  const parsedFigure =
+    row.figure != null ? figureSchema.safeParse(row.figure) : null;
   return {
     id: row.question_id,
     section: row.section_key,
@@ -120,5 +125,9 @@ export function responseToQuestion(row: AttemptResponseRow): Question {
     response_format: row.response_format === 'spr' ? 'spr' : 'mcq',
     correct_answer: row.correct_answer,
     answer_tolerance: row.answer_tolerance,
+    // Sub-project #15: reviews render the figure snapshot AS PRESENTED (never a
+    // re-join to the live question). Validate through figureSchema — the safety
+    // wall — so a malformed snapshot degrades to null rather than crashing.
+    figure: parsedFigure?.success ? parsedFigure.data : null,
   };
 }
