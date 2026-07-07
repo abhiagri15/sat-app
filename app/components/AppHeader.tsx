@@ -20,6 +20,12 @@ export async function AppHeader() {
           Dashboard
         </Link>
         <Link
+          href="/practice"
+          className="text-sm text-slate-500 transition-colors hover:text-slate-900"
+        >
+          Practice
+        </Link>
+        <Link
           href="/analytics"
           className="text-sm text-slate-500 transition-colors hover:text-slate-900"
         >

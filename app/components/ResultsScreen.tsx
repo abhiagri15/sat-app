@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import type { Test, Results, ResponseValue } from '@/app/lib/test';
 import { sectionQuestions } from '@/app/lib/test';
 import type { SaveStatus } from '@/app/hooks/useTestSession';
@@ -81,6 +82,14 @@ export function ResultsScreen({
               {showReview ? 'Hide full review' : 'Show full review'}
             </Button>
           </div>
+          <p className="mt-3 text-sm text-slate-600">
+            <Link
+              href="/practice"
+              className="font-medium text-blue-600 underline hover:text-blue-700"
+            >
+              Strengthen your weak areas → Practice
+            </Link>
+          </p>
           {saveStatus === 'saving' && (
             <p className="text-sm text-slate-500 mt-3">Saving to your dashboard…</p>
           )}

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { getOrCreateProfile } from '@/app/lib/auth/profile';
 import { getAnalytics } from '@/app/lib/analytics/queries';
 import { accuracyPct, focusAreas } from '@/app/lib/analytics/compute';
+import { skillSlug } from '@/app/lib/practice/slug';
 import { ScoreTrend } from '@/app/components/analytics/ScoreTrend';
 import { SkillAccuracy } from '@/app/components/analytics/SkillAccuracy';
 import { SECTION_CONFIG } from '@/app/lib/questions';
@@ -90,11 +91,27 @@ export default async function AnalyticsPage() {
             <p className="text-sm text-amber-800">
               Your weakest skills — worth some practice:
             </p>
-            <ul className="mt-2 space-y-1">
+            <ul className="mt-2 space-y-1.5">
               {focus.map((s) => (
-                <li key={s.skill} className="text-sm text-amber-900">
-                  {s.skill} — {accuracyPct(s.correct, s.total)}% ({s.correct}/
-                  {s.total})
+                <li
+                  key={s.skill}
+                  className="flex flex-wrap items-baseline gap-x-2 text-sm text-amber-900"
+                >
+                  <span>
+                    <Link
+                      href={`/practice/${skillSlug(s.skill)}`}
+                      className="font-medium underline decoration-amber-400 hover:text-amber-950"
+                    >
+                      {s.skill}
+                    </Link>{' '}
+                    — {accuracyPct(s.correct, s.total)}% ({s.correct}/{s.total})
+                  </span>
+                  <Link
+                    href={`/practice/${skillSlug(s.skill)}?drill=1`}
+                    className="text-amber-800 underline decoration-amber-400 hover:text-amber-950"
+                  >
+                    Practice this skill →
+                  </Link>
                 </li>
               ))}
             </ul>
