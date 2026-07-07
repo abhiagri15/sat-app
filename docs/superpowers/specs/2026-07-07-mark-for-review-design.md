@@ -24,11 +24,22 @@ A real student asked for exactly this.
   nothing carries across modules or sections — Bluebook behavior).
 - `moduleReview: boolean` + `openModuleReview()` + `closeModuleReview(qi?)`
   (optional jump target — sets `qIdx` and returns to the question view).
-- `screen` stays `'test'` throughout — the section countdown keeps running
-  during review (authentic; zero timer changes). Time-up auto-submit is
-  UNCHANGED and bypasses review. `submitModule()` itself is untouched — the
-  review page is the only UI path that calls it; all downstream flow
-  (Module-2 routing/draw, break phase, results) is untouched.
+- `screen` stays `'test'` throughout — the section COUNTDOWN keeps running
+  during review (authentic; no countdown changes). The per-question
+  STOPWATCH gains exactly one new stop point: review-open commits and stops
+  it (add `moduleReview` to the #15 display-effect guard + deps), so review
+  time is attributed to NO question — otherwise it silently corrupts the
+  pacing analytics by accruing to whichever question was last displayed.
+  Time-up auto-submit is UNCHANGED and bypasses review. `submitModule()`
+  itself is untouched — the review page is the only UI path that calls it;
+  all downstream flow (Module-2 routing/draw, break phase, results) is
+  untouched.
+- Review auto-closes on every boundary via ONE effect —
+  `useEffect(() => setModuleReview(false), [secIdx, modIdx, screen])` — the
+  advances are scattered across five paths (short advance, finish, async
+  Module-2 draw, break entry, resumeFromBreak), so per-site resets would
+  leak; the effect covers all of them (Module 2 must never start under a
+  stale review page).
 
 ### UI
 
