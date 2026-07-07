@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import type { Question } from '@/app/lib/questions';
 import { SprInput } from '@/app/components/SprInput';
 import { FlagQuestion } from '@/app/components/FlagQuestion';
 import { FigureView } from '@/app/components/FigureView';
+import { ExplainMistake } from '@/app/components/ExplainMistake';
 
 interface DrillQuestionProps {
   question: Question;
@@ -44,6 +45,38 @@ export function DrillQuestion({
 }: DrillQuestionProps) {
   const isSpr = question.response_format === 'spr';
   const canCheck = isSpr ? entered.trim().length > 0 : selected != null;
+
+  // Answer eliminator (design spec §D). Local UI state, mcq-only, never
+  // persisted. `eliminatorOn` is the small toggle above the choices;
+  // `eliminated` holds the struck choice indices for the CURRENT question.
+  // Both reset when the question changes (id-keyed effect) since this component
+  // instance is reused across the drill's questions (SkillDrill does not key it).
+  const [eliminatorOn, setEliminatorOn] = useState(false);
+  const [eliminated, setEliminated] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    setEliminated(new Set());
+  }, [question.id]);
+
+  function toggleEliminate(i: number) {
+    setEliminated((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+
+  // Selecting a choice clears its elimination (design spec §D).
+  function handleSelect(i: number) {
+    if (eliminated.has(i)) {
+      setEliminated((prev) => {
+        const next = new Set(prev);
+        next.delete(i);
+        return next;
+      });
+    }
+    onSelect(i);
+  }
 
   // Keyboard: Enter checks/advances only when focus is NOT on an interactive
   // control — buttons (choices, flag submit, Next), selects, and textareas
@@ -102,49 +135,94 @@ export function DrillQuestion({
           <SprInput value={entered} onChange={(v) => onEntered(v)} />
         </div>
       ) : (
-        <div className="mt-4 flex flex-col gap-2.5">
-          {question.choices.map((choice, i) => {
-            const isSelected = selected === i;
-            const isAnswer = i === question.answerIndex;
-            // After grading: mark the correct choice green; a wrong selection red.
-            const showCorrect = checked && isAnswer;
-            const showWrong = checked && isSelected && !isAnswer;
-            return (
+        <>
+          {/* Answer eliminator toggle (design spec §D) — mcq-only, hidden once
+              graded (choices are disabled after Check answer). It is a BUTTON,
+              so the Enter-key handler above exempts it. */}
+          {!checked && (
+            <div className="mt-4">
               <button
-                key={i}
                 type="button"
-                disabled={checked}
-                onClick={() => onSelect(i)}
+                onClick={() => setEliminatorOn((v) => !v)}
+                aria-pressed={eliminatorOn}
+                title="Cross out answer choices you've ruled out"
                 className={clsx(
-                  'flex items-start gap-3 rounded-lg border px-4 py-3 text-left text-sm transition',
-                  !checked &&
-                    'cursor-pointer border-slate-200 hover:border-blue-500 hover:bg-blue-50',
-                  !checked &&
-                    isSelected &&
-                    'border-blue-500 bg-blue-50 ring-1 ring-inset ring-blue-500',
-                  showCorrect && 'border-green-500 bg-green-50 text-green-900',
-                  showWrong && 'border-red-500 bg-red-50 text-red-900',
-                  checked && !showCorrect && !showWrong && 'border-slate-200 text-slate-600',
+                  'rounded-md border px-2.5 py-1 text-xs transition',
+                  eliminatorOn
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-slate-300 bg-white text-slate-600 hover:border-blue-500 hover:bg-blue-50',
                 )}
               >
-                <span
-                  aria-hidden="true"
+                <span className="line-through">ABC</span>{' '}
+                {eliminatorOn ? 'On' : 'Cross out'}
+              </button>
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-col gap-2.5">
+            {question.choices.map((choice, i) => {
+              const isSelected = selected === i;
+              const isAnswer = i === question.answerIndex;
+              // After grading: mark the correct choice green; a wrong selection red.
+              const showCorrect = checked && isAnswer;
+              const showWrong = checked && isSelected && !isAnswer;
+              const isEliminated = !checked && eliminated.has(i);
+              return (
+                <div
+                  key={i}
                   className={clsx(
-                    'mt-0.5 min-w-[18px] font-bold',
-                    showCorrect && 'text-green-600',
-                    showWrong && 'text-red-600',
-                    !checked && isSelected && 'text-blue-600',
-                    !checked && !isSelected && 'text-slate-300',
-                    checked && !showCorrect && !showWrong && 'text-slate-300',
+                    'flex items-start gap-2 rounded-lg border text-sm transition',
+                    !checked &&
+                      'border-slate-200 hover:border-blue-500 hover:bg-blue-50',
+                    !checked &&
+                      isSelected &&
+                      'border-blue-500 bg-blue-50 ring-1 ring-inset ring-blue-500',
+                    showCorrect && 'border-green-500 bg-green-50 text-green-900',
+                    showWrong && 'border-red-500 bg-red-50 text-red-900',
+                    checked && !showCorrect && !showWrong && 'border-slate-200 text-slate-600',
+                    isEliminated && 'opacity-40',
                   )}
                 >
-                  {showCorrect ? '✓' : showWrong ? '✗' : '•'}
-                </span>
-                <span>{choice}</span>
-              </button>
-            );
-          })}
-        </div>
+                  <button
+                    type="button"
+                    disabled={checked}
+                    onClick={() => handleSelect(i)}
+                    className={clsx(
+                      'flex flex-1 items-start gap-3 px-4 py-3 text-left',
+                      !checked && 'cursor-pointer',
+                    )}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={clsx(
+                        'mt-0.5 min-w-[18px] font-bold',
+                        showCorrect && 'text-green-600',
+                        showWrong && 'text-red-600',
+                        !checked && isSelected && 'text-blue-600',
+                        !checked && !isSelected && 'text-slate-300',
+                        checked && !showCorrect && !showWrong && 'text-slate-300',
+                      )}
+                    >
+                      {showCorrect ? '✓' : showWrong ? '✗' : '•'}
+                    </span>
+                    <span className={clsx(isEliminated && 'line-through')}>{choice}</span>
+                  </button>
+                  {eliminatorOn && !checked && (
+                    <button
+                      type="button"
+                      aria-pressed={isEliminated}
+                      aria-label={isEliminated ? 'Restore this option' : 'Eliminate this option'}
+                      onClick={() => toggleEliminate(i)}
+                      className="my-2 mr-2 min-w-[24px] rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs font-semibold text-slate-500 transition hover:border-slate-500 hover:text-slate-800"
+                    >
+                      {isEliminated ? '↺' : '✕'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {!checked ? (
@@ -196,6 +274,18 @@ export function DrillQuestion({
                 <span>{question.explanation}</span>
               )}
             </div>
+
+            {/* Coach follow-up on a miss (design spec §E). Drill questions are
+                LIVE sat.questions rows, so the server re-reads by id — no
+                snapshot needed; we pass only the student's specific answer. */}
+            {lastCorrect === false && (
+              <ExplainMistake
+                questionId={question.id}
+                chosen={isSpr ? null : selected}
+                entered={isSpr ? entered : null}
+                responseFormat={isSpr ? 'spr' : 'mcq'}
+              />
+            )}
 
             <FlagQuestion questionId={question.id} />
           </div>

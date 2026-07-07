@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { clsx } from 'clsx';
 import type { TestSection, ResponseValue } from '@/app/lib/test';
 import { TopBar } from './TopBar';
 import { QuestionView } from './QuestionView';
@@ -52,6 +53,7 @@ export function TestScreen(props: TestScreenProps) {
   const isLastSection = secIdx === totalSections - 1;
   const isLastModule = modIdx === section.modules.length - 1;
   const isMath = section.key === 'math';
+  const isMcq = question.response_format !== 'spr';
 
   // Calculator + Reference panels are Math-only tools. State lives at this
   // level so panels persist as the student moves between questions in the
@@ -59,6 +61,42 @@ export function TestScreen(props: TestScreenProps) {
   // because `isMath` becomes false on the next render.
   const [calcOpen, setCalcOpen] = useState(false);
   const [refOpen, setRefOpen] = useState(false);
+
+  // Answer eliminator (design spec §D). UI-STATE ONLY — never persisted, never
+  // in the payload. `eliminatorOn` is the toolbar toggle (visible for ALL
+  // tests, not math-only). `eliminated` maps a question id → the Set of struck
+  // choice indices for that question, so eliminations survive navigating
+  // between questions within the runner. Keyed by id (stable across shuffles).
+  const [eliminatorOn, setEliminatorOn] = useState(false);
+  const [eliminated, setEliminated] = useState<Map<string, Set<number>>>(new Map());
+
+  const currentEliminated = eliminated.get(question.id);
+
+  function toggleEliminate(i: number) {
+    setEliminated((prev) => {
+      const next = new Map(prev);
+      const set = new Set(next.get(question.id) ?? []);
+      if (set.has(i)) set.delete(i);
+      else set.add(i);
+      next.set(question.id, set);
+      return next;
+    });
+  }
+
+  // Selecting a choice clears its elimination (design spec §D). Then defer to
+  // the real answer handler.
+  function handleAnswer(value: number | string) {
+    if (typeof value === 'number' && eliminated.get(question.id)?.has(value)) {
+      setEliminated((prev) => {
+        const next = new Map(prev);
+        const set = new Set(next.get(question.id) ?? []);
+        set.delete(value);
+        next.set(question.id, set);
+        return next;
+      });
+    }
+    onAnswer(value);
+  }
 
   return (
     <>
@@ -90,36 +128,59 @@ export function TestScreen(props: TestScreenProps) {
           </div>
         )}
 
-        {isMath && (
-          <div className="mb-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setCalcOpen((v) => !v)}
-              aria-pressed={calcOpen}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:border-blue-500 hover:bg-blue-50"
-            >
-              {calcOpen ? '× Calculator' : '🖩 Calculator'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setRefOpen((v) => !v)}
-              aria-pressed={refOpen}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:border-blue-500 hover:bg-blue-50"
-            >
-              {refOpen ? '× Reference' : '📐 Reference'}
-            </button>
-          </div>
-        )}
+        {/* Tool toolbar: the answer eliminator toggle is available on ALL
+            tests (not math-only, unlike calculator/reference). It only takes
+            effect on mcq choice rows. */}
+        <div className="mb-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setEliminatorOn((v) => !v)}
+            aria-pressed={eliminatorOn}
+            title="Cross out answer choices you've ruled out"
+            className={clsx(
+              'rounded-md border px-3 py-1.5 text-sm transition',
+              eliminatorOn
+                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                : 'border-slate-300 bg-white text-slate-700 hover:border-blue-500 hover:bg-blue-50',
+            )}
+          >
+            <span className="line-through">ABC</span>{' '}
+            {eliminatorOn ? 'On' : 'Cross out'}
+          </button>
+          {isMath && (
+            <>
+              <button
+                type="button"
+                onClick={() => setCalcOpen((v) => !v)}
+                aria-pressed={calcOpen}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:border-blue-500 hover:bg-blue-50"
+              >
+                {calcOpen ? '× Calculator' : '🖩 Calculator'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setRefOpen((v) => !v)}
+                aria-pressed={refOpen}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:border-blue-500 hover:bg-blue-50"
+              >
+                {refOpen ? '× Reference' : '📐 Reference'}
+              </button>
+            </>
+          )}
+        </div>
 
         <QuestionView
           section={{ name: section.name }}
           question={question}
           selected={sectionResponses[qIdx] ?? null}
-          onAnswer={onAnswer}
+          onAnswer={handleAnswer}
           onPrev={onPrev}
           onNext={onNext}
           isFirst={qIdx === 0}
           isLast={qIdx === mod.questions.length - 1}
+          eliminatorOn={eliminatorOn && isMcq}
+          eliminated={currentEliminated}
+          onToggleEliminate={toggleEliminate}
         />
         <QuestionNavigator
           section={section}

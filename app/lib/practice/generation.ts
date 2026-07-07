@@ -6,9 +6,10 @@
 // NEVER import this from a 'use client' module.
 
 import { getProvider } from '@/app/lib/ai/provider';
-import type { GuidanceInput } from '@/app/lib/ai/provider';
+import type { ExplainInput, GuidanceInput } from '@/app/lib/ai/provider';
 import { lessonSchema } from '@/app/lib/ai/lesson-schema';
 import { guidanceSchema } from '@/app/lib/ai/guidance-schema';
+import { explanationSchema } from '@/app/lib/ai/explanation-schema';
 import { generateBatchForSkill } from '@/app/lib/ai/generate';
 import { parseSpr } from '@/app/lib/spr';
 import { createAdminClient } from '@/app/lib/supabase/admin';
@@ -29,6 +30,12 @@ export const TOPUP_COOLDOWN_MIN = 30;
 export const GUIDANCE_COOLDOWN_MIN = 10;
 // How many recent responses feed the guidance prompt as evidence.
 export const EVIDENCE_LIMIT = 12;
+// Max "Explain my mistake" calls per user per UTC day (design spec §E).
+// Best-effort under concurrency (same posture as the top-up cooldown) — the
+// count is read then a row is inserted, with no lock; a race can let two calls
+// both pass at the boundary. The cost of exceeding by one is one wasted Ollama
+// call, so no lock.
+export const EXPLAIN_DAILY_CAP = 30;
 
 // The model identifier stored alongside generated content — mirrors however the
 // Ollama provider names its model (process.env.SAT_AI_MODEL, read inside
@@ -283,6 +290,87 @@ export async function topupSkill(
     return { status: 'generated', inserted };
   } catch (e) {
     console.error('[practice-gen] topupSkill unexpected error', e);
+    return { status: 'failed' };
+  }
+}
+
+// --- explainForUser ---------------------------------------------------------
+
+export type ExplainForUserResult =
+  | { status: 'ok'; explanation: string; takeaway: string }
+  | { status: 'capped' }
+  | { status: 'failed' };
+
+// "Explain my mistake" (design spec §E). Generate a per-question explanation of
+// the student's specific wrong answer, rate-capped per user per UTC day. Never
+// throws — the route degrades gracefully on any error.
+//   - Count today's (UTC) sat.coach_explains rows for the user (service role).
+//     At/over EXPLAIN_DAILY_CAP → { status: 'capped' } (no generation).
+//   - Otherwise provider.explainMistake → explanationSchema.safeParse (one
+//     retry on any failure) → insert the log row (user_id, question_id) →
+//     { status: 'ok', ... }. A parse/generate failure after the retry →
+//     { status: 'failed' }.
+// The cap is best-effort under concurrency (see EXPLAIN_DAILY_CAP).
+export async function explainForUser(
+  userId: string,
+  input: ExplainInput & { questionId: string },
+): Promise<ExplainForUserResult> {
+  try {
+    const admin = createAdminClient();
+
+    // UTC calendar-day window: [today 00:00Z, now]. head:exact count is a
+    // single round trip that never pulls rows.
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const countRes = await admin
+      .schema('sat')
+      .from('coach_explains')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('created_at', dayStart.toISOString());
+    if (countRes.error) {
+      console.error('[practice-gen] explainForUser count failed', countRes.error);
+      return { status: 'failed' };
+    }
+    if ((countRes.count ?? 0) >= EXPLAIN_DAILY_CAP) {
+      return { status: 'capped' };
+    }
+
+    const provider = getProvider();
+    // Strip the caller-only questionId before handing the LLM input to the
+    // provider (the provider takes an ExplainInput, not the log key).
+    const { questionId, ...llmInput } = input;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let content: unknown;
+      try {
+        content = await provider.explainMistake(llmInput);
+      } catch (e) {
+        console.error('[practice-gen] explainForUser generate error', e);
+        continue;
+      }
+      const parsed = explanationSchema.safeParse(content);
+      if (!parsed.success) continue;
+
+      // Log the call (rate-cap trail). A logging failure must not mask a
+      // successful explanation — the response is already valid.
+      const log = await admin
+        .schema('sat')
+        .from('coach_explains')
+        .insert({ user_id: userId, question_id: questionId });
+      if (log.error) {
+        console.error('[practice-gen] explainForUser log insert failed', log.error);
+      }
+
+      return {
+        status: 'ok',
+        explanation: parsed.data.explanation,
+        takeaway: parsed.data.takeaway,
+      };
+    }
+    return { status: 'failed' };
+  } catch (e) {
+    console.error('[practice-gen] explainForUser unexpected error', e);
     return { status: 'failed' };
   }
 }

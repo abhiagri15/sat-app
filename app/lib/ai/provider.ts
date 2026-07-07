@@ -48,6 +48,33 @@ export interface GuidanceInput {
   evidence: GuidanceEvidenceItem[];
 }
 
+// Input to explainMistake (design spec §E — "Explain my mistake" coach
+// follow-up). Everything the coach needs to explain ONE wrong answer:
+//   - the question fields (section, skill, prompt, optional passage, choices)
+//   - the correct answer, as text
+//   - the student's specific wrong answer: `chosenText` (mcq — the text of the
+//     choice they picked) OR `enteredValue` (spr — the string they typed)
+//   - `responseFormat` so the prompt phrases mcq vs grid-in correctly
+//   - `figureText`: the deterministic describeFigure() serialization when the
+//     item carries a figure (the model never sees the SVG)
+//   - `trusted`: false when the question text came from a client snapshot (a
+//     review item whose sat.questions row was since disabled/deleted) rather
+//     than a fresh server re-read; the prompt notes the provenance so the coach
+//     hedges on question wording it cannot fully vouch for.
+export interface ExplainInput {
+  section: SectionKey;
+  skill: string;
+  prompt: string;
+  passage?: string;
+  choices: string[];
+  correctText: string;
+  chosenText: string;
+  enteredValue?: string;
+  responseFormat: 'mcq' | 'spr';
+  figureText?: string;
+  trusted: boolean;
+}
+
 export interface AIProvider {
   // Generate `count` questions for one (section, skill, difficulty).
   // Caller decides mcq vs spr via the `useSpr` flag (spr is Math-only).
@@ -103,6 +130,13 @@ export interface AIProvider {
   // response evidence. Returns `unknown`; the caller validates via
   // `guidanceSchema`.
   generateGuidance(input: GuidanceInput): Promise<unknown>;
+  // Explain ONE wrong answer to the student (design spec §E). The prompt gets
+  // the question + choices + correct answer + the student's specific answer and
+  // asks why their pick is tempting but wrong and how to see the correct path
+  // (2–5 sentences) plus one takeaway line. Returns `unknown`; the caller
+  // validates via `explanationSchema`. Student content is treated as quoted
+  // data, never instructions; the response is plain text with no letter refs.
+  explainMistake(input: ExplainInput): Promise<unknown>;
 }
 
 // Provider factory — keyed on SAT_AI_PROVIDER so other providers can be added later.

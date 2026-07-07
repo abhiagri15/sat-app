@@ -6,6 +6,7 @@ import type { Question } from '@/app/lib/questions';
 import { isSprCorrect } from '@/app/lib/spr';
 import { FlagQuestion } from './FlagQuestion';
 import { FigureView } from './FigureView';
+import { ExplainMistake } from './ExplainMistake';
 
 interface ReviewItemProps {
   question: Question;
@@ -117,6 +118,30 @@ export function ReviewItem({ question, response }: ReviewItemProps) {
           <span>{question.explanation}</span>
         )}
       </div>
+
+      {/* Coach follow-up on a miss (design spec §E), incorrect + not-skipped
+          only. Review questions are SNAPSHOTS: the server re-reads sat.questions
+          by id and falls back to these snapshot fields when the row is gone
+          (disabled/deleted) — marking the prompt untrusted in that case. */}
+      {!skipped && !isCorrect && (
+        <ExplainMistake
+          questionId={question.id}
+          chosen={typeof response === 'number' ? response : null}
+          entered={typeof response === 'string' ? response : null}
+          responseFormat={question.response_format ?? 'mcq'}
+          snapshot={{
+            prompt: question.prompt,
+            passage: question.passage ?? null,
+            choices: question.choices,
+            answerIndex: question.answerIndex,
+            correctAnswer: question.correct_answer ?? null,
+            responseFormat: question.response_format ?? 'mcq',
+            skill: question.skill,
+            section: question.section,
+          }}
+        />
+      )}
+
       <FlagQuestion questionId={question.id} />
     </div>
   );
