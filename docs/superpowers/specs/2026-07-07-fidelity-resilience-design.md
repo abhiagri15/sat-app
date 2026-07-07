@@ -48,15 +48,24 @@ admin has to stumble on them.
   localStorage (`sat:inprogress-test:v1`) containing: schema `version`,
   `savedAt`, `testLength`, `studentName`, the full in-memory `Test`
   (questions incl. figures — a full test serializes well under the ~5 MB
-  budget), `responses`, `timesMs`, `marked` (as array), `secIdx`, `modIdx`,
-  `qIdx`, `remaining`, `breaksEnabled`, `breaksUsed`, `module2Path` per
-  section (already inside Test), and `screen`-adjacent flags needed to
-  resume mid-break (`onBreak`, `breakRemaining`).
+  budget), `responses`, **`timesMs` (serialize `timesMsRef.current` — omit
+  it and pacing analytics for the whole resumed test are silently zeroed at
+  save)**, `marked` (as array), `secIdx`, `modIdx`, `qIdx`, `remaining`,
+  `breaksEnabled`, `breaksUsed`, `module2Path` per section (already inside
+  Test), and mid-break flags (`onBreak`, `breakRemaining`). `moduleReview`
+  is NOT snapshotted — restore always lands on the question view (the #16
+  auto-close effect forces it anyway). **Break semantics:** a mid-break
+  snapshot stores the PRE-advance `secIdx` (the just-finished R&W index) —
+  `resumeFromBreak()` does the `secIdx+1` advance itself, so storing the
+  post-advance index would double-advance on resume.
 - **Write points:** answer change, question/module/section navigation, mark
   toggle, pause/resume, break entry — throttled to at most one write per
   2 s, plus an unthrottled write on `visibilitychange → hidden` and
-  `pagehide` (the crash-adjacent moments). All writes wrapped in try/catch —
-  a quota error must NEVER break the test (silently skip).
+  `pagehide` (the crash-adjacent moments). Deliberately NO write point
+  inside `performModule2Draw` (an in-flight draw's `module2ParamsRef` is
+  not serializable state; the pre-submit snapshot suffices). All writes
+  wrapped in try/catch — a quota error must NEVER break the test (silently
+  skip).
 - **Restore:** on the start screen, if a snapshot exists, parses, matches
   `version`, and `savedAt` is < 12 h old → show a "Resume your test?" card
   (test length, section, time remaining, saved-when) with **Resume** and
@@ -70,7 +79,13 @@ admin has to stumble on them.
 - **Integrity:** version mismatch or parse failure → treat as absent and
   clear. Restore is Strict-Mode-safe (single-fire ref) and must set ALL
   state before the timer effect can tick (set state synchronously in one
-  batch, then screen last).
+  batch, then screen last). Rehydration includes the REFS: `timesMsRef
+  .current` from the snapshot, `activeQuestionRef.current = null` (the
+  `start()` precedent). The restore check runs BEFORE the resave-on-mount
+  effect so a restored in-progress test never collides with a leftover
+  `sat:pending-attempt:v1`. In `finish()`, ordering is: clear the
+  in-progress snapshot FIRST, then write the pending-attempt backup — a
+  crash between finish and save must leave only the pending-attempt.
 - Drills: excluded (a drill is 10 untimed questions; restarting is cheap).
 
 ## C. Explanation cache ("wrong-answer analysis by default", the cheap way)
@@ -91,7 +106,12 @@ admin has to stumble on them.
   is free). **Miss:** existing cap check → generate → validate → INSERT
   cache with `ignoreDuplicates` (race-safe) → log → return. Cache ONLY
   trusted-live inputs (snapshot-sourced questions skip caching — their text
-  is client-supplied).
+  is client-supplied). Placement note: the cache read/write needs
+  `input.questionId`, which the current code strips before the provider
+  call — both live in the OUTER function scope, between schema-validate
+  success and the return. Shuffle-invariance is what `chosen_key` buys; the
+  PK `(question_id, chosen_key)` is what keeps identical wrong-answer text
+  on different questions separate — the check fixtures assert BOTH.
 - UI unchanged — the button simply becomes instant after the first student
   makes a given mistake. Auto-displaying cached analysis in reviews is
   deferred (v2, needs a batched read path).
@@ -106,8 +126,12 @@ admin has to stumble on them.
   - `open_flags >= 2`
   - `n >= 10 AND p < 0.15` (reason `'very-hard-suspect'`)
   - `n >= 10 AND p > 0.97` (reason `'too-easy'`)
-  ordered by open_flags desc, then n desc. Response counts union both
-  response tables (the calibration query shape).
+  ordered by open_flags desc, then n desc. Shape note: this is NOT one
+  grouped scan — it combines "questions with ≥10 graded responses" (the
+  calibration union-aggregate shape) with "questions with ≥1 open flag"
+  (LEFT-joined flags-count subquery), and a question can qualify on flags
+  alone with n = 0. `reasons` assembled with
+  `array_remove(array[...], null)`.
 - **UI:** new `/admin/review` page (admin layout gates it): the queue rows —
   skill, excerpt, n, p, flags, reason chips — each linking to
   `/admin/questions/[id]` where the existing disable toggle and item stats
@@ -116,6 +140,21 @@ admin has to stumble on them.
 - Deliberately NOT a lifecycle state machine: no new columns, no gating of
   draws — the queue is computed. The full `approved_for_scored_tests` gate
   stays deferred until response volume can sustain it (documented).
+
+## E. Contact link (user-requested)
+
+A "Contact" affordance showing the creator's email
+(`abhishek15@gmail.com`) so students/parents can reach out directly:
+- **Signed-in app:** a small "Contact" link in the `AppHeader` overflow /
+  footer area — plain `mailto:` (audience is authenticated; no scraper
+  exposure).
+- **Public marketing page:** add to `MarketingFooter` with light
+  obfuscation — the address assembled at render from parts / entity-encoded
+  (never the raw string in the static HTML) behind a `mailto:` link — the
+  page is public and indexable; plain text invites harvester spam.
+- Copy: "Questions or feedback? Contact the creator" — and note beside it
+  that broken questions should use the in-app Report option (keeps the
+  existing flag pipeline as the content-issue channel).
 
 ## Security invariants
 

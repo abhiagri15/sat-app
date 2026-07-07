@@ -19,10 +19,16 @@ remedies, and that signal feeds both the plan and the coach.
   `('concept','careless','time_pressure','misread','setup','vocab')`.
 - **Write path:** security-definer RPC
   `sat.tag_miss_reason(p_origin text, p_response_id uuid, p_reason text)` —
-  `p_origin in ('test','practice')` picks the table; verifies the row
-  belongs to `auth.uid()` AND `is_correct = false`; `p_reason` null clears
-  the tag (re-taggable). `grant execute to authenticated`. No write
-  policies (standing rule).
+  `p_origin in ('test','practice')` picks the table; the UPDATE is guarded
+  `where id = p_response_id and user_id = auth.uid() and is_correct =
+  false`; a non-matching id is a SILENT no-op (return false), never a
+  raise — a stale client id must not 500. `p_reason` null clears the tag
+  (re-taggable); non-null values validated against the closed set (the
+  column CHECK is the backstop). `grant execute to authenticated`. No write
+  policies (standing rule). **Single source for the enum:** an exported
+  `MISS_REASONS` const (value + label + prompt phrasing) that the zod
+  union, the six UI chips, and the guidance phrasing all derive from — only
+  the SQL CHECK duplicates it (note beside the SKILLS two-places gotcha).
 - **UI — "Why did you miss this?" chip row** (one-tap, six labeled chips:
   Didn't know the concept · Careless slip · Ran out of time · Misread it ·
   Set it up wrong · Vocabulary), selected chip highlighted, tappable to
@@ -31,15 +37,28 @@ remedies, and that signal feeds both the plan and the coach.
      already selected — render under each incorrect `ReviewItem`.
   2. **Drill summary recap:** practice response ids are fetched after save
      via an RLS-scoped select on `practice_responses` by `session_id`
-     (select-own policy already exists), mapped by `position`.
+     (select-own policy + `(session_id, position)` index already exist),
+     mapped by `position` — the drill index the client sent, which
+     `save_practice` persists verbatim. Chips render ONLY on incorrect
+     rows (the RPC rejects correct ones).
   Post-test results-screen review is EXCLUDED v1 (in-memory questions lack
   response ids; the attempt page is one click away).
-- **Consumers:** `sat.skill_evidence` gains a `miss_reason` column (the
-  RETURNS TABLE changes → the migration must DROP the old function and
-  recreate — signature change is deploy-safe because only server code calls
-  it and app+DB ship together here). The guidance prompt includes the tag
-  on evidence lines when present ("student says: careless slip"). The
-  planner (below) consumes reason mixes per skill.
+- **Consumers:** `sat.skill_evidence` gains a `miss_reason` column. The
+  RETURNS TABLE signature changes, and Postgres forbids CREATE OR REPLACE
+  from changing a return type → the migration must `DROP FUNCTION
+  sat.skill_evidence(text,int)` and recreate — **and a DROP loses the ACL:
+  the recreate MUST re-issue `grant execute ... to authenticated` and keep
+  `security invoker` + `set search_path to ''`** (unlike the
+  CREATE-OR-REPLACE cases that preserve ACLs). `miss_reason` reads straight
+  off the response row (no new join; the questions LEFT join stays).
+  Feeding the guidance prompt is a THREE-place change: `GuidanceEvidenceItem`
+  gains `missReason: string | null` (provider.ts), the guidance route maps
+  it through, and the Ollama prompt renders it ("student's own read:
+  careless slip") when present. The planner (below) consumes per-skill
+  reason mixes via a NEW invoker RPC **`sat.miss_reason_mix()`** (security
+  INVOKER, `grant execute to authenticated`, the `user_analytics`
+  precedent): tagged incorrect responses across both tables grouped by
+  `(skill, miss_reason)` with counts.
 
 ## B. Study Planner
 
@@ -80,6 +99,9 @@ remedies, and that signal feeds both the plan and the coach.
   ("42% on tests · mostly 'ran out of time' misses").
 - **`overdueSkills(inputs): OverdueSkill[]`** — tested accuracy < 75% AND
   (never drilled OR last practiced > 14 days ago), weakest first, capped 8.
+  "Never drilled" = absent from the practice-stats map — the helper
+  iterates the full `SKILLS` taxonomy, never just the practiced keys (the
+  zero-history fixture asserts never-drilled skills surface).
 - **`paceSummary(inputs)`** — current estimate (average of last 3 test
   scores, else last), target, gap, days/weeks to test date, and a one-line
   pace note. Reason-aware tip: when a skill's dominant miss reason is
