@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createClient } from '@/app/lib/supabase/server';
 import type { Question } from '@/app/lib/questions';
 import { figureSchema } from '@/app/lib/ai/figure-schema';
@@ -29,7 +30,7 @@ const SUMMARY_COLUMNS =
 
 // The signed-in user's attempts, newest first. RLS scopes the rows to them.
 // The id tie-break keeps the order stable for attempts saved in the same ms.
-export async function listAttempts(): Promise<AttemptSummary[]> {
+export const listAttempts = cache(async function listAttempts(): Promise<AttemptSummary[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .schema('sat')
@@ -42,7 +43,7 @@ export async function listAttempts(): Promise<AttemptSummary[]> {
     return [];
   }
   return (data ?? []) as unknown as AttemptSummary[];
-}
+});
 
 // One attempt_responses row, as stored.
 export interface AttemptResponseRow {

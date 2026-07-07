@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createClient } from '@/app/lib/supabase/server';
 
 // Per-skill practice aggregates for the signed-in user (from the
@@ -23,7 +24,7 @@ interface PracticeSkillStatRow {
 
 // Reads sat.practice_skill_stats() and keys the result by skill. On error,
 // logs and returns {} so the page still renders (graceful degradation).
-export async function getPracticeSkillStats(): Promise<
+export const getPracticeSkillStats = cache(async function getPracticeSkillStats(): Promise<
   Record<string, PracticeSkillStat>
 > {
   const supabase = await createClient();
@@ -46,7 +47,7 @@ export async function getPracticeSkillStats(): Promise<
     };
   }
   return bySkill;
-}
+});
 
 // One recent drill row, as listed on a skill page.
 export interface RecentDrill {

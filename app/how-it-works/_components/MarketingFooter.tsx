@@ -1,13 +1,11 @@
 // app/how-it-works/_components/MarketingFooter.tsx
 import Link from 'next/link';
+import { ContactLink } from './ContactLink';
 
 export function MarketingFooter() {
-  // This page is public and indexable — plain text invites harvester spam.
-  // Assemble the address at render from parts so the raw string never appears
-  // as a contiguous literal in the static HTML (spec §E). The href still opens
-  // a normal mailto: for a real visitor.
-  const user = 'abhishek15';
-  const host = 'gmail.com';
+  // Contact address is assembled CLIENT-side (ContactLink): this is a Server
+  // Component, so any template assembly here would still ship the contiguous
+  // address in the static HTML — exactly what spec §E forbids.
   return (
     <footer className="border-t border-slate-200 bg-slate-50">
       <div className="mx-auto flex max-w-5xl flex-col gap-3 px-6 py-4 text-xs text-slate-500">
@@ -20,9 +18,7 @@ export function MarketingFooter() {
         </div>
         <p className="text-slate-400">
           Questions or feedback?{' '}
-          <a href={`mailto:${user}@${host}`} className="hover:text-slate-700">
-            Contact the creator
-          </a>
+          <ContactLink className="underline hover:text-slate-700" />
           . For a problem with a specific question, use the Report option in your
           review.
         </p>

@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createClient } from '@/app/lib/supabase/server';
 import { listAttempts } from '@/app/lib/persistence/queries';
 import {
@@ -14,7 +15,7 @@ interface UserAnalyticsRpc {
 
 // Assembles the analytics view: per-skill/section aggregates from the
 // user_analytics RPC, the score trend + summary from the attempt list.
-export async function getAnalytics(): Promise<AnalyticsView> {
+export const getAnalytics = cache(async function getAnalytics(): Promise<AnalyticsView> {
   const supabase = await createClient();
   const attempts = await listAttempts();
 
@@ -35,7 +36,7 @@ export async function getAnalytics(): Promise<AnalyticsView> {
     .map((a) => ({ date: a.created_at, score: a.scaled_score }));
 
   return { summary: summarize(attempts, skills), sections, skills, trend };
-}
+});
 
 // One per-skill/section pacing row from sat.user_pacing(). `responses`/`timed`
 // are counts (PostgREST can serialize bigint as a string — coerced via Number);
