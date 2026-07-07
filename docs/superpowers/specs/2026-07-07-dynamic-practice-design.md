@@ -88,13 +88,23 @@ rolling accuracy in that skill.
   `/api/practice/guidance {skill}` and shows an "Updating your coaching…"
   shimmer; on success `router.refresh()`. The route re-checks staleness
   server-side, enforces a **10-minute per-(user, skill) cooldown** (via
-  `generated_at`), gathers evidence, generates, validates, upserts.
+  `generated_at`), gathers evidence, generates, validates, upserts. The route
+  returns a discriminated status — `regenerated | cooled_down | fresh |
+  error` — and the shimmer resolves accordingly: `cooled_down`/`fresh` →
+  "Your coaching is up to date" (existing guidance keeps rendering, no
+  refresh); `error` → subtle retry link.
 - Evidence for the prompt comes from **`sat.skill_evidence(p_skill, p_limit)`**
   (new security-invoker RPC, RLS does the scoping): the student's most recent
   responses for the skill across both response tables — prompt, choices,
   chosen/entered answer, correct answer, is_correct, difficulty, timestamp —
   plus aggregate accuracy (overall and last-10). The generation prompt
   explicitly instructs the model to reference specific mistakes.
+  **Precision notes:** neither response table stores `difficulty` or a
+  per-row timestamp — `difficulty` comes from joining `sat.questions` by
+  `question_id` (fine under invoker: `sat.questions` is
+  select-for-authenticated), and the timestamp from the parent row
+  (`test_attempts.created_at` / `practice_sessions.created_at`) — the same
+  union-with-parent-timestamp shape `draw_drill` Tier 1 already uses.
 - Note: `entered_value` is student free text and flows into the prompt.
   Injection risk is accepted: output is schema-constrained JSON rendered
   React-escaped; worst case is bad coaching text for that student only.
@@ -117,17 +127,36 @@ rolling accuracy in that skill.
   `runGeneration()` in `app/lib/ai/generate.ts` into an exported
   `generateBatchForSkill(section, skill, count)` used by both the cron path
   and the top-up route (behavior of the cron path unchanged; includes the
-  math SPR coin flip).
-- The hourly n8n generator stays untouched as the global backstop.
+  math SPR coin flip). The extraction MUST preserve the
+  incremental-insert-with-`23505`-catch loop — a top-up racing the hourly
+  n8n run on the dedup UNIQUE constraint counts the duplicate and continues,
+  it does not throw.
+- The hourly n8n generator stays untouched as the global backstop. Known,
+  accepted divergence: the top-up's unseen check is **skill-level** while
+  the pool's demand elsewhere is per `(section, skill, difficulty)` cell —
+  a specific difficulty cell can be starved while the skill count reads
+  healthy; the adaptive draw falls back across difficulties and the hourly
+  generator is the difficulty-aware backstop. Do not "fix" this here
+  (difficulty-targeted generation is explicitly deferred).
+- The cooldown is a **best-effort** cap, not a hard one: two near-simultaneous
+  saves (double-submit, two tabs) can both pass the `practice_topups` check
+  and each generate a batch. Harm is one wasted Ollama batch; dedup makes the
+  rows converge. Accepted — no locking.
+- Client disconnect does not kill the work: Vercel functions run to
+  completion (up to `maxDuration`) regardless of the caller's connection —
+  the `keepalive: true` flag just lets the browser send the request during
+  navigation; the server, not the client, keeps the generation alive.
 
 ### D. Adaptive drill difficulty
 
 - Replace `sat.draw_drill` (CREATE OR REPLACE, same signature) with v2:
   - Tier 1 (currently-missed, capped at half) — unchanged. Review is review.
   - Rolling accuracy = the student's last 20 responses for the skill across
-    both response tables. Bands: `< 50%` → easy-leaning quota (50% easy /
-    35% medium / 15% hard), `50–75%` or no history → balanced (25/50/25),
-    `> 75%` → hard-leaning (10/35/55).
+    both response tables (ordered by the parent-row timestamp, same
+    union-with-parent shape as Tier 1). Bands: `< 50%` → easy-leaning quota
+    (50% easy / 35% medium / 15% hard), `50–75%` or no history → balanced
+    (25/50/25), `> 75%` → hard-leaning (10/35/55). Tier 1 stays
+    difficulty-agnostic — say so in the migration comment.
   - Tiers 2 (fresh) and 3 (recycled) fill difficulty sub-quotas
     (largest-remainder split of the remaining count), falling back across
     difficulties freely when a sub-quota can't fill (never return fewer
@@ -140,8 +169,11 @@ rolling accuracy in that skill.
   **Coach's update** (or unlock nudge) → drill runner → lesson (AI base or
   fallback, with source byline) → recent drills.
 - `LessonView` renders both sources identically (same `Lesson` shape); add a
-  small byline slot ("AI-generated · refreshed <date>" / "Standard lesson —
-  personalized version coming up").
+  small neutral byline slot ("Lesson · updated <date>" for the AI base /
+  "Standard lesson — a tailored version is being prepared" while
+  generating). Deliberately neutral wording: a real student previously
+  flagged AI-generated content quality, so the source is not shouted; quality
+  is guarded by `lessonSchema` + the archetype rules instead.
 - New components: `CoachUpdate` (presentational), `GuidanceRefresher` +
   `LessonGenerating` (small `'use client'` trigger/shimmer wrappers).
 - Drill wiring: on save success, `SkillDrill` (or the hook's save callback)
@@ -152,10 +184,11 @@ rolling accuracy in that skill.
 
 `TOPUP_THRESHOLD = 12`, `TOPUP_BATCH = 5`, `TOPUP_COOLDOWN_MIN = 30`,
 `GUIDANCE_COOLDOWN_MIN = 10`, `EVIDENCE_LIMIT = 12`, rolling window 20.
-AI provider/model: the existing `SAT_AI_PROVIDER` / `OLLAMA_*` config —
-provider interface gains `generateLesson(...)` and `generateGuidance(...)`
-methods implemented by `OllamaCloudProvider` (same chat endpoint + tolerant
-JSON extraction as `generateQuestions`).
+AI provider/model: the existing `SAT_AI_PROVIDER` / `OLLAMA_*` config — the
+`AIProvider` interface gains `generateLesson(...)` and `generateGuidance(...)`
+as **required** methods (any future provider must implement them; the
+`getProvider()` factory is unchanged), implemented by `OllamaCloudProvider`
+(same chat endpoint + tolerant JSON extraction as `generateQuestions`).
 
 ### G. Routes & limits
 
@@ -198,8 +231,9 @@ cooldowns above, enforced against DB timestamps (serverless has no memory).
 
 - `scripts/check-lesson-schema.ts` (new): every STATIC lesson passes
   `lessonSchema` (one schema governs both sources, so render paths can't
-  diverge); guidance fixtures pass/fail `guidanceSchema` correctly
-  (missing-field and out-of-bounds rejections).
+  diverge — and schema-vs-authoring-bounds drift surfaces immediately);
+  guidance fixtures pass/fail `guidanceSchema` correctly (missing-field and
+  out-of-bounds rejections).
 - Existing check scripts stay green (check-lessons still enforces static
   fallback completeness — fallbacks remain load-bearing).
 - Gates: type-check, lint, build.
