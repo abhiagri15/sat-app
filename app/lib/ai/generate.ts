@@ -45,6 +45,21 @@ export interface GenerationSummary {
   repairedMultiValid: number;
 }
 
+// The fine-grained counters a single-target batch produces. These are the
+// exact per-target contributions the old inline loop mutated on `summary`;
+// `runGeneration` re-aggregates them per target so the cron JSON summary is
+// byte-equivalent for identical inputs, and the top-up route (which needs the
+// same gate but a different picker) reuses the batch pipeline verbatim.
+export interface BatchSummary {
+  generated: number;
+  accepted: number;
+  rejectedSchema: number;
+  rejectedSelfVerify: number;
+  rejectedDuplicate: number;
+  rejectedMultiValid: number;
+  repairedMultiValid: number;
+}
+
 type Difficulty = 'easy' | 'medium' | 'hard';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'medium', 'hard'] as const;
 
@@ -76,6 +91,252 @@ interface GeneratorState {
   bufferTarget: number;
   skills: GeneratorStateSkill[];
   cells: GeneratorStateCell[];
+}
+
+// Generate, gate, and insert one batch of `count` questions for a single
+// (section, skill, difficulty). This is the per-target pipeline extracted
+// verbatim from runGeneration()'s inner loop: SPR coin flip (math-only) →
+// provider generate → generatedQuestionSchema gate → section/skill/difficulty
+// pin → self-verify solve → multi-validity check/repair → dedup-hash → per-row
+// insert with the 23505 unique-violation catch. Survivors are inserted
+// incrementally via the service-role client (bypasses RLS). Returns the
+// fine-grained counters so callers can aggregate them.
+//
+// `difficulty` is optional: the cron path (runGeneration) always pins to the
+// thinnest cell's difficulty; the top-up path omits it and takes the default
+// mix ('medium') — difficulty-targeted top-up is explicitly deferred.
+export async function generateBatchForSkill(
+  section: 'rw' | 'math',
+  skill: string,
+  count: number,
+  difficulty: Difficulty = 'medium',
+): Promise<BatchSummary> {
+  const admin = createAdminClient();
+  const provider = getProvider();
+  const summary: BatchSummary = {
+    generated: 0,
+    accepted: 0,
+    rejectedSchema: 0,
+    rejectedSelfVerify: 0,
+    rejectedDuplicate: 0,
+    rejectedMultiValid: 0,
+    repairedMultiValid: 0,
+  };
+
+  const useSpr = section === 'math' && Math.random() < SPR_PROBABILITY;
+  let candidates;
+  try {
+    candidates = await provider.generateQuestions(
+      section, skill, count, useSpr, difficulty,
+    );
+  } catch (e) {
+    console.error('[generate] provider error', section, skill, difficulty, e);
+    return summary;
+  }
+  for (const candidate of candidates) {
+    summary.generated++;
+    const parsed = generatedQuestionSchema.safeParse(candidate);
+    if (!parsed.success) { summary.rejectedSchema++; continue; }
+    const q = parsed.data;
+    // Pin section/skill/difficulty to what we requested — reject a question
+    // the model mis-tagged (keeps the SKILLS × difficulty depth-balancing honest).
+    if (q.section !== section || q.skill !== skill || q.difficulty !== difficulty) {
+      summary.rejectedSchema++;
+      continue;
+    }
+
+    // Self-verify branches on the discriminator. For mcq the model picks
+    // an index and we compare to answerIndex; for spr the model types a
+    // numeric answer and we compare with isSprCorrect.
+    let verified = false;
+    try {
+      if (q.responseFormat === 'mcq') {
+        const r = await provider.solve({
+          responseFormat: 'mcq',
+          section: q.section,
+          skill: q.skill,
+          passage: q.passage,
+          prompt: q.prompt,
+          choices: q.choices,
+        });
+        verified = r.responseFormat === 'mcq' && r.answerIndex === q.answerIndex;
+      } else {
+        const r = await provider.solve({
+          responseFormat: 'spr',
+          section: q.section,
+          skill: q.skill,
+          prompt: q.prompt,
+        });
+        verified =
+          r.responseFormat === 'spr' &&
+          isSprCorrect(r.answer, q.correctAnswer, q.answerTolerance ?? null);
+      }
+    } catch (e) {
+      console.error('[generate] solve error', e);
+      summary.rejectedSelfVerify++;
+      continue;
+    }
+    if (!verified) { summary.rejectedSelfVerify++; continue; }
+
+    // Multi-validity check (mcq only): the prior solve agreed on the
+    // generator's claimed answer, but the choice list may still contain
+    // a SECOND valid answer (e.g. a quadratic with both roots listed).
+    // Ask the model to evaluate every choice and either repair-then-accept
+    // or reject. SPR has no choices so this is skipped.
+    let repairedChoices: string[] | null = null;
+    if (q.responseFormat === 'mcq') {
+      let validIndices: number[] = [];
+      try {
+        validIndices = await provider.findValidChoices({
+          responseFormat: 'mcq',
+          section: q.section,
+          skill: q.skill,
+          passage: q.passage,
+          prompt: q.prompt,
+          choices: q.choices,
+        });
+      } catch (e) {
+        console.error('[generate] findValidChoices error', e);
+        summary.rejectedMultiValid++;
+        continue;
+      }
+      const okSingle =
+        validIndices.length === 1 && validIndices[0] === q.answerIndex;
+      if (!okSingle) {
+        // Try to repair before dropping. Repair is only meaningful when:
+        //   - the intended answer IS judged valid (model agrees with the
+        //     generator about which choice is correct), AND
+        //   - one or two OTHER choices are ALSO judged valid (the bug class
+        //     we're targeting), AND
+        //   - not ALL four are flagged valid (a hopeless case).
+        const canRepair =
+          validIndices.includes(q.answerIndex) &&
+          validIndices.length > 1 &&
+          validIndices.length < 4;
+        if (!canRepair) {
+          summary.rejectedMultiValid++;
+          continue;
+        }
+        const toReplace = validIndices.filter((i) => i !== q.answerIndex);
+        let repaired: { choices: string[] } | null = null;
+        try {
+          repaired = await provider.repairMultiValid({
+            section: q.section,
+            skill: q.skill,
+            passage: q.passage,
+            prompt: q.prompt,
+            choices: q.choices,
+            answerIndex: q.answerIndex,
+            indicesToReplace: toReplace,
+          });
+        } catch (e) {
+          console.error('[generate] repairMultiValid error', e);
+        }
+        if (repaired === null) {
+          summary.rejectedMultiValid++;
+          continue;
+        }
+        // Re-run findValidChoices on the repaired list. Only accept if
+        // exactly the intended answer is valid now.
+        let reValid: number[] = [];
+        try {
+          reValid = await provider.findValidChoices({
+            responseFormat: 'mcq',
+            section: q.section,
+            skill: q.skill,
+            passage: q.passage,
+            prompt: q.prompt,
+            choices: repaired.choices,
+          });
+        } catch (e) {
+          console.error('[generate] re-findValidChoices error', e);
+          summary.rejectedMultiValid++;
+          continue;
+        }
+        if (reValid.length !== 1 || reValid[0] !== q.answerIndex) {
+          // Repair didn't hold — drop.
+          summary.rejectedMultiValid++;
+          continue;
+        }
+        // Repair succeeded. Use the repaired choice list for the insert.
+        repairedChoices = repaired.choices;
+        summary.repairedMultiValid++;
+      }
+    }
+
+    // Build the insert row. mcq uses choices + answer_index; spr uses
+    // correct_answer + answer_tolerance with placeholder choices/index
+    // (the runner ignores them when response_format = 'spr'). Explicit
+    // wider field types so the conditional doesn't get narrowed to one
+    // branch's literal types by Supabase's insert type inference.
+    const nowIso = new Date().toISOString();
+    const row: {
+      id: string;
+      section: 'rw' | 'math';
+      skill: string;
+      passage: string | null;
+      prompt: string;
+      choices: string[];
+      answer_index: number;
+      explanation: string;
+      source: string;
+      response_format: 'mcq' | 'spr';
+      correct_answer: string | null;
+      answer_tolerance: number | null;
+      dedup_hash: string;
+      difficulty: 'easy' | 'medium' | 'hard';
+      classified_at: string;
+    } = q.responseFormat === 'mcq'
+      ? {
+          id: `ai-${randomUUID()}`,
+          section: q.section,
+          skill: q.skill,
+          passage: q.passage ?? null,
+          prompt: q.prompt,
+          // If we repaired the choice list to remove an extra-valid
+          // choice, insert the repaired set. answerIndex is unchanged
+          // because the repair preserves the intended-answer slot.
+          choices: repairedChoices ?? q.choices,
+          answer_index: q.answerIndex,
+          explanation: q.explanation,
+          source: 'ai',
+          response_format: 'mcq',
+          correct_answer: null,
+          answer_tolerance: null,
+          // Dedup against the FINAL choice list — a repaired candidate
+          // hashes differently from the original buggy version, which is
+          // the right behavior (the bug version would've been rejected).
+          dedup_hash: dedupHash(q.prompt, repairedChoices ?? q.choices, q.passage),
+          difficulty: q.difficulty,
+          classified_at: nowIso,
+        }
+      : {
+          id: `ai-${randomUUID()}`,
+          section: q.section,
+          skill: q.skill,
+          passage: null,
+          prompt: q.prompt,
+          choices: [],
+          answer_index: 0,
+          explanation: q.explanation,
+          source: 'ai',
+          response_format: 'spr',
+          correct_answer: q.correctAnswer,
+          answer_tolerance: q.answerTolerance ?? null,
+          dedup_hash: dedupHash(q.prompt, [q.correctAnswer]),
+          difficulty: q.difficulty,
+          classified_at: nowIso,
+        };
+
+    const { error } = await admin.schema('sat').from('questions').insert(row);
+    if (error) {
+      if (error.code === '23505') summary.rejectedDuplicate++;
+      else console.error('[generate] insert error', error);
+      continue;
+    }
+    summary.accepted++;
+  }
+  return summary;
 }
 
 export async function runGeneration(): Promise<GenerationSummary> {
@@ -168,222 +429,21 @@ export async function runGeneration(): Promise<GenerationSummary> {
   });
 
   // 6. generate, gate, insert. SPR (math-only) is requested with a per-target
-  //    coin-flip at SPR_PROBABILITY; mcq otherwise. R&W always mcq.
-  const provider = getProvider();
+  //    coin-flip at SPR_PROBABILITY; mcq otherwise. R&W always mcq. Each
+  //    target runs the extracted generateBatchForSkill pipeline; its
+  //    fine-grained counters are re-aggregated here so the JSON summary is
+  //    byte-equivalent with the old inline loop.
   for (const t of targets) {
-    const useSpr = t.section === 'math' && Math.random() < SPR_PROBABILITY;
-    let candidates;
-    try {
-      candidates = await provider.generateQuestions(
-        t.section, t.skill, PER_SKILL_BATCH, useSpr, t.difficulty,
-      );
-    } catch (e) {
-      console.error('[generate] provider error', t.section, t.skill, t.difficulty, e);
-      continue;
-    }
-    for (const candidate of candidates) {
-      summary.generated++;
-      const parsed = generatedQuestionSchema.safeParse(candidate);
-      if (!parsed.success) { summary.rejectedSchema++; continue; }
-      const q = parsed.data;
-      // Pin section/skill/difficulty to what we requested — reject a question
-      // the model mis-tagged (keeps the SKILLS × difficulty depth-balancing honest).
-      if (q.section !== t.section || q.skill !== t.skill || q.difficulty !== t.difficulty) {
-        summary.rejectedSchema++;
-        continue;
-      }
-
-      // Self-verify branches on the discriminator. For mcq the model picks
-      // an index and we compare to answerIndex; for spr the model types a
-      // numeric answer and we compare with isSprCorrect.
-      let verified = false;
-      try {
-        if (q.responseFormat === 'mcq') {
-          const r = await provider.solve({
-            responseFormat: 'mcq',
-            section: q.section,
-            skill: q.skill,
-            passage: q.passage,
-            prompt: q.prompt,
-            choices: q.choices,
-          });
-          verified = r.responseFormat === 'mcq' && r.answerIndex === q.answerIndex;
-        } else {
-          const r = await provider.solve({
-            responseFormat: 'spr',
-            section: q.section,
-            skill: q.skill,
-            prompt: q.prompt,
-          });
-          verified =
-            r.responseFormat === 'spr' &&
-            isSprCorrect(r.answer, q.correctAnswer, q.answerTolerance ?? null);
-        }
-      } catch (e) {
-        console.error('[generate] solve error', e);
-        summary.rejectedSelfVerify++;
-        continue;
-      }
-      if (!verified) { summary.rejectedSelfVerify++; continue; }
-
-      // Multi-validity check (mcq only): the prior solve agreed on the
-      // generator's claimed answer, but the choice list may still contain
-      // a SECOND valid answer (e.g. a quadratic with both roots listed).
-      // Ask the model to evaluate every choice and either repair-then-accept
-      // or reject. SPR has no choices so this is skipped.
-      let repairedChoices: string[] | null = null;
-      if (q.responseFormat === 'mcq') {
-        let validIndices: number[] = [];
-        try {
-          validIndices = await provider.findValidChoices({
-            responseFormat: 'mcq',
-            section: q.section,
-            skill: q.skill,
-            passage: q.passage,
-            prompt: q.prompt,
-            choices: q.choices,
-          });
-        } catch (e) {
-          console.error('[generate] findValidChoices error', e);
-          summary.rejectedMultiValid++;
-          continue;
-        }
-        const okSingle =
-          validIndices.length === 1 && validIndices[0] === q.answerIndex;
-        if (!okSingle) {
-          // Try to repair before dropping. Repair is only meaningful when:
-          //   - the intended answer IS judged valid (model agrees with the
-          //     generator about which choice is correct), AND
-          //   - one or two OTHER choices are ALSO judged valid (the bug class
-          //     we're targeting), AND
-          //   - not ALL four are flagged valid (a hopeless case).
-          const canRepair =
-            validIndices.includes(q.answerIndex) &&
-            validIndices.length > 1 &&
-            validIndices.length < 4;
-          if (!canRepair) {
-            summary.rejectedMultiValid++;
-            continue;
-          }
-          const toReplace = validIndices.filter((i) => i !== q.answerIndex);
-          let repaired: { choices: string[] } | null = null;
-          try {
-            repaired = await provider.repairMultiValid({
-              section: q.section,
-              skill: q.skill,
-              passage: q.passage,
-              prompt: q.prompt,
-              choices: q.choices,
-              answerIndex: q.answerIndex,
-              indicesToReplace: toReplace,
-            });
-          } catch (e) {
-            console.error('[generate] repairMultiValid error', e);
-          }
-          if (repaired === null) {
-            summary.rejectedMultiValid++;
-            continue;
-          }
-          // Re-run findValidChoices on the repaired list. Only accept if
-          // exactly the intended answer is valid now.
-          let reValid: number[] = [];
-          try {
-            reValid = await provider.findValidChoices({
-              responseFormat: 'mcq',
-              section: q.section,
-              skill: q.skill,
-              passage: q.passage,
-              prompt: q.prompt,
-              choices: repaired.choices,
-            });
-          } catch (e) {
-            console.error('[generate] re-findValidChoices error', e);
-            summary.rejectedMultiValid++;
-            continue;
-          }
-          if (reValid.length !== 1 || reValid[0] !== q.answerIndex) {
-            // Repair didn't hold — drop.
-            summary.rejectedMultiValid++;
-            continue;
-          }
-          // Repair succeeded. Use the repaired choice list for the insert.
-          repairedChoices = repaired.choices;
-          summary.repairedMultiValid++;
-        }
-      }
-
-      // Build the insert row. mcq uses choices + answer_index; spr uses
-      // correct_answer + answer_tolerance with placeholder choices/index
-      // (the runner ignores them when response_format = 'spr'). Explicit
-      // wider field types so the conditional doesn't get narrowed to one
-      // branch's literal types by Supabase's insert type inference.
-      const nowIso = new Date().toISOString();
-      const row: {
-        id: string;
-        section: 'rw' | 'math';
-        skill: string;
-        passage: string | null;
-        prompt: string;
-        choices: string[];
-        answer_index: number;
-        explanation: string;
-        source: string;
-        response_format: 'mcq' | 'spr';
-        correct_answer: string | null;
-        answer_tolerance: number | null;
-        dedup_hash: string;
-        difficulty: 'easy' | 'medium' | 'hard';
-        classified_at: string;
-      } = q.responseFormat === 'mcq'
-        ? {
-            id: `ai-${randomUUID()}`,
-            section: q.section,
-            skill: q.skill,
-            passage: q.passage ?? null,
-            prompt: q.prompt,
-            // If we repaired the choice list to remove an extra-valid
-            // choice, insert the repaired set. answerIndex is unchanged
-            // because the repair preserves the intended-answer slot.
-            choices: repairedChoices ?? q.choices,
-            answer_index: q.answerIndex,
-            explanation: q.explanation,
-            source: 'ai',
-            response_format: 'mcq',
-            correct_answer: null,
-            answer_tolerance: null,
-            // Dedup against the FINAL choice list — a repaired candidate
-            // hashes differently from the original buggy version, which is
-            // the right behavior (the bug version would've been rejected).
-            dedup_hash: dedupHash(q.prompt, repairedChoices ?? q.choices, q.passage),
-            difficulty: q.difficulty,
-            classified_at: nowIso,
-          }
-        : {
-            id: `ai-${randomUUID()}`,
-            section: q.section,
-            skill: q.skill,
-            passage: null,
-            prompt: q.prompt,
-            choices: [],
-            answer_index: 0,
-            explanation: q.explanation,
-            source: 'ai',
-            response_format: 'spr',
-            correct_answer: q.correctAnswer,
-            answer_tolerance: q.answerTolerance ?? null,
-            dedup_hash: dedupHash(q.prompt, [q.correctAnswer]),
-            difficulty: q.difficulty,
-            classified_at: nowIso,
-          };
-
-      const { error } = await admin.schema('sat').from('questions').insert(row);
-      if (error) {
-        if (error.code === '23505') summary.rejectedDuplicate++;
-        else console.error('[generate] insert error', error);
-        continue;
-      }
-      summary.accepted++;
-    }
+    const batch = await generateBatchForSkill(
+      t.section, t.skill, PER_SKILL_BATCH, t.difficulty,
+    );
+    summary.generated += batch.generated;
+    summary.accepted += batch.accepted;
+    summary.rejectedSchema += batch.rejectedSchema;
+    summary.rejectedSelfVerify += batch.rejectedSelfVerify;
+    summary.rejectedDuplicate += batch.rejectedDuplicate;
+    summary.rejectedMultiValid += batch.rejectedMultiValid;
+    summary.repairedMultiValid += batch.repairedMultiValid;
   }
   return summary;
 }
