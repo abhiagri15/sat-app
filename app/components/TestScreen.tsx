@@ -30,17 +30,22 @@ interface TestScreenProps {
   paused?: boolean;
   onPause?: () => void;
   onResume?: () => void;
+  // In-test Module-2 assembly failure (after one automatic retry): when set,
+  // an overlay with a manual Retry is shown. null unless errored.
+  module2Error?: string | null;
+  onRetryModule2?: () => void;
 }
 
 export function TestScreen(props: TestScreenProps) {
   const {
     section, secIdx, modIdx, totalSections, qIdx, sectionResponses, remaining,
     studentName, testLength, onAnswer, onGoToQuestion, onPrev, onNext, onSubmitModule,
-    hideModule2Path = false,
     breaksEnabled = false,
     paused = false,
     onPause = () => {},
     onResume = () => {},
+    module2Error = null,
+    onRetryModule2 = () => {},
   } = props;
   const mod = section.modules[modIdx];
   const question = mod.questions[qIdx];
@@ -70,18 +75,6 @@ export function TestScreen(props: TestScreenProps) {
             <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
               {section.name} · Module {modIdx + 1} of {section.modules.length}
             </span>
-            {modIdx === 1 && section.module2Path && !hideModule2Path && (
-              <span
-                className={`rounded px-2 py-0.5 font-medium ${
-                  section.module2Path === 'harder'
-                    ? 'bg-amber-100 text-amber-800'
-                    : 'bg-blue-100 text-blue-800'
-                }`}
-                title="Path chosen by Module 1 performance"
-              >
-                Adaptive: {section.module2Path === 'harder' ? 'Harder' : 'Easier'}
-              </span>
-            )}
           </div>
         )}
 
@@ -144,6 +137,24 @@ export function TestScreen(props: TestScreenProps) {
       {isMath && calcOpen && <CalculatorPanel onClose={() => setCalcOpen(false)} />}
       {isMath && refOpen && <ReferencePanel onClose={() => setRefOpen(false)} />}
       {paused && <PausedOverlay onResume={onResume} />}
+      {module2Error && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-white/95 px-6 backdrop-blur-sm"
+          role="alertdialog"
+          aria-modal="true"
+          aria-label="Module 2 connection problem"
+        >
+          <h2 className="text-2xl font-semibold text-slate-800">Connection problem building Module 2</h2>
+          <p className="max-w-md text-center text-slate-500">{module2Error}</p>
+          <button
+            type="button"
+            onClick={onRetryModule2}
+            className="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+          >
+            Retry
+          </button>
+        </div>
+      )}
     </>
   );
 }

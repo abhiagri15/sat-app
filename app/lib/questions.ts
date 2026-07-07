@@ -401,9 +401,18 @@ export const BANK: Question[] = [
   },
 ];
 
+// `moduleSeconds` is the OFFICIAL Digital SAT per-module time budget and the
+// source of truth for full-test module timers (R&W 32 min = 1920 s, Math
+// 35 min = 2100 s). `secsPerQ` is DERIVED (`moduleSeconds / moduleSize` —
+// ≈71.1 s for R&W, ≈95.5 s for Math) so short-test budgets
+// (`Math.round(shortCount × secsPerQ)`) and every existing multiply-only call
+// site keep working while automatically tracking real pacing. Because
+// `secsPerQ` is now fractional, every timer seed derived from it must be
+// `Math.round`ed so `remaining` starts integral. Scoring curves are
+// count-based and untouched by this timing change.
 export const SECTION_CONFIG = {
-  rw:   { name: 'Reading & Writing', shortCount: 10, moduleSize: 27, modulesPerSection: 2, secsPerQ: 90  },
-  math: { name: 'Math',              shortCount: 10, moduleSize: 22, modulesPerSection: 2, secsPerQ: 105 },
+  rw:   { name: 'Reading & Writing', shortCount: 10, moduleSize: 27, modulesPerSection: 2, moduleSeconds: 1920, secsPerQ: 1920 / 27 },
+  math: { name: 'Math',              shortCount: 10, moduleSize: 22, modulesPerSection: 2, moduleSeconds: 2100, secsPerQ: 2100 / 22 },
 } as const;
 
 export const SECTION_ORDER = ['rw', 'math'] as const;

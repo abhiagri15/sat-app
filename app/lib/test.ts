@@ -93,10 +93,18 @@ export function buildTest(
       ? Math.min(cfg.shortCount, bank[secKey].length)
       : Math.min(cfg.moduleSize, bank[secKey].length);
     const questions = bank[secKey].slice(0, moduleSize).map(shuffleChoices);
+    // Full-test Module 1 seeds from the official `moduleSeconds`; short tests
+    // from the derived per-question budget. `secsPerQ` is fractional now, so
+    // Math.round keeps the seed integral (see SECTION_CONFIG comment). When a
+    // cold-start pool draw yields fewer than a full module, the seed scales
+    // down proportionally rather than over-timing the shortened module.
+    const timeLimit = testLength === 'full' && moduleSize === cfg.moduleSize
+      ? cfg.moduleSeconds
+      : Math.round(moduleSize * cfg.secsPerQ);
     return {
       key: secKey,
       name: cfg.name,
-      modules: [{ index: 0, questions, timeLimit: moduleSize * cfg.secsPerQ }],
+      modules: [{ index: 0, questions, timeLimit }],
     };
   });
   return { name: name || 'Student', length: testLength, sections };
@@ -115,7 +123,13 @@ export function appendModule2(
   const cfg = SECTION_CONFIG[sec.key];
   const moduleSize = Math.min(cfg.moduleSize, drawn.length);
   const questions = drawn.slice(0, moduleSize).map(shuffleChoices);
-  const m2: TestModule = { index: 1, questions, timeLimit: moduleSize * cfg.secsPerQ };
+  // Module 2 is full-test-only. A complete module seeds from the official
+  // `moduleSeconds`; a cold-start short module scales down proportionally.
+  // `secsPerQ` is fractional, so Math.round keeps the seed integral.
+  const timeLimit = moduleSize === cfg.moduleSize
+    ? cfg.moduleSeconds
+    : Math.round(moduleSize * cfg.secsPerQ);
+  const m2: TestModule = { index: 1, questions, timeLimit };
   const newSections = test.sections.map((s, i) =>
     i === secIdx ? { ...s, modules: [s.modules[0], m2], module2Path: path } : s,
   );

@@ -3,6 +3,7 @@
 import { useTestSession } from '@/app/hooks/useTestSession';
 import { StartScreen } from './StartScreen';
 import { TestScreen } from './TestScreen';
+import { BreakScreen } from './BreakScreen';
 import { ResultsScreen } from './ResultsScreen';
 
 export default function SatPractice({
@@ -46,6 +47,7 @@ export default function SatPractice({
           setTestLength={s.setTestLength}
           onStart={s.start}
           loading={s.loading}
+          startError={s.startError}
           dailyAttemptLimit={dailyAttemptLimit}
           attemptsRemaining={attemptsRemaining}
           hideModule2Path={hideModule2Path}
@@ -54,6 +56,10 @@ export default function SatPractice({
         />
       </>
     );
+  }
+
+  if (s.screen === 'break') {
+    return <BreakScreen remaining={s.breakRemaining} onResume={s.resumeFromBreak} />;
   }
 
   if (s.screen === 'test' && s.test) {
@@ -83,6 +89,8 @@ export default function SatPractice({
         paused={s.paused}
         onPause={s.pause}
         onResume={s.resume}
+        module2Error={s.module2Error}
+        onRetryModule2={s.retryModule2}
       />
     );
   }

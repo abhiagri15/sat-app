@@ -12,6 +12,9 @@ interface StartScreenProps {
   setTestLength: (l: TestLength) => void;
   onStart: () => void;
   loading: boolean;
+  // Full-test assembly failure message; null when there's no error. Shown with
+  // a retry affordance (the Start button). Cleared on the next start().
+  startError?: string | null;
   dailyAttemptLimit: number;
   attemptsRemaining: number;
   hideModule2Path: boolean;
@@ -24,6 +27,7 @@ export function StartScreen({
   setTestLength,
   onStart,
   loading,
+  startError = null,
   dailyAttemptLimit,
   attemptsRemaining,
   hideModule2Path,
@@ -76,6 +80,18 @@ export function StartScreen({
                 break. Leave unchecked for a strict, real-test timed run.
               </span>
             </label>
+          )}
+
+          {startError && (
+            <div className="mb-3 rounded-md border border-red-200 bg-red-50 p-4" role="alert">
+              <p className="text-sm font-medium text-red-800">Couldn&rsquo;t start the test</p>
+              <p className="mt-0.5 text-sm text-red-700">{startError}</p>
+              {!limitReached && (
+                <p className="mt-1 text-xs text-red-600">
+                  Press &ldquo;Start Test&rdquo; below to try again, or switch to a Quick test.
+                </p>
+              )}
+            </div>
           )}
 
           {limitReached ? (

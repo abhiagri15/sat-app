@@ -43,6 +43,21 @@ function assert(cond: unknown, label: string): void {
 
 assert(CURVE_VERSION === 'dsat-pt1-2024-09+adaptive', 'CURVE_VERSION locked');
 
+// ---------- Official module timing (sub-project #15, Section F) ----------
+// `moduleSeconds` is the authoritative full-test module budget; `secsPerQ` is
+// derived (`moduleSeconds / moduleSize`) and now fractional. Assert both the
+// pinned constants and that the derived value round-trips within 1 second.
+assert(SECTION_CONFIG.rw.moduleSeconds === 1920,   'SECTION_CONFIG.rw.moduleSeconds === 1920');
+assert(SECTION_CONFIG.math.moduleSeconds === 2100, 'SECTION_CONFIG.math.moduleSeconds === 2100');
+assert(
+  Math.abs(SECTION_CONFIG.rw.secsPerQ * SECTION_CONFIG.rw.moduleSize - SECTION_CONFIG.rw.moduleSeconds) < 1,
+  'R&W secsPerQ × moduleSize round-trips to moduleSeconds (<1s)',
+);
+assert(
+  Math.abs(SECTION_CONFIG.math.secsPerQ * SECTION_CONFIG.math.moduleSize - SECTION_CONFIG.math.moduleSeconds) < 1,
+  'Math secsPerQ × moduleSize round-trips to moduleSeconds (<1s)',
+);
+
 assert(RW_CURVE.length - 1 === SECTION_CONFIG.rw.moduleSize,
   `R&W curve length (${RW_CURVE.length - 1}) === moduleSize (${SECTION_CONFIG.rw.moduleSize})`);
 assert(MATH_CURVE.length - 1 === SECTION_CONFIG.math.moduleSize,

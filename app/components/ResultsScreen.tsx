@@ -7,6 +7,7 @@ import type { SaveStatus } from '@/app/hooks/useTestSession';
 import { ReviewItem } from './ReviewItem';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
+import { CURVE_VERSION } from '@/app/lib/scoring';
 
 interface ResultsScreenProps {
   test: Test;
@@ -50,7 +51,10 @@ export function ResultsScreen({
                 </span>
               )}
             </div>
-            <div className="text-slate-500 mt-1.5">Composite (400–1600)</div>
+            <div className="text-slate-500 mt-1.5">Estimated score · Composite (400–1600)</div>
+            <div className="text-slate-400 mt-1 text-sm">
+              An estimate — typically within ±30 per section of a real administration.
+            </div>
           </div>
           <div className="h-3 rounded-full bg-slate-200 overflow-hidden my-4 mb-1.5">
             <span className="block h-full bg-blue-600" style={{ width: `${Math.round(pct * 100)}%` }} />
@@ -118,7 +122,8 @@ export function ResultsScreen({
             </div>
           )}
           <p className="text-sm text-slate-500 mt-3">
-            Scored using a College Board–published Digital SAT scoring curve.
+            Estimated using a College Board–published Digital SAT scoring curve
+            ({CURVE_VERSION}).
           </p>
         </CardContent>
       </Card>
