@@ -66,8 +66,10 @@ empty states, responsive, keyboard-accessible.
   - **Focus areas hero**: top-3 weakest skills from `sat.user_analytics()` +
     `focusAreas()` (reused as-is). Each card: skill name, domain, test accuracy,
     practice stats (drills, last practiced), mastery tier chip, and two CTAs —
-    **Learn** and **Practice** (both → `/practice/[slug]`, Practice deep-links
-    the drill via `?drill=1`).
+    **Learn** and **Practice** (both → `/practice/[slug]`; Practice adds
+    `?drill=1`, which the skill page passes to `SkillDrill` as an auto-start
+    flag — the runner calls `start()` on mount instead of waiting for the
+    button).
   - **Skill catalog**: all skills grouped section → domain. Each row: skill
     name, test-accuracy chip (or "not yet tested"), practice count, link.
   - **Empty state** (no tests taken): banner "Take a test to get personalized
@@ -113,7 +115,7 @@ States: `idle → loading → drilling → summary` (+ `error` from loading).
 | `app/lib/practice/draw.ts` | `'use client'` | `drawDrill(skill, count)` → `sat.draw_drill` RPC → `rowToQuestion` (mirrors `pool.ts` conventions) |
 | `app/lib/practice/payload.ts` | pure | `toPracticePayload()` mapper (no I/O) |
 | `app/lib/practice/schema.ts` | pure | zod payload schema — **lists every wire field** incl. SPR fields (strip-mode gotcha), `.refine` for per-format choices rule |
-| `app/lib/practice/actions.ts` | `'use server'` | `savePractice()` — zod-validate → `sat.save_practice`; failures logged to `sat.save_failures` with `context.kind='practice'` |
+| `app/lib/practice/actions.ts` | `'use server'` | `savePractice()` — zod-validate → `sat.save_practice`; failures logged to `sat.save_failures` with `context.kind='practice'` via a `logSaveFailure` helper **extracted from `persistence/actions.ts` into a shared server-only module** (so `createAdminClient` gains no new import site beyond the documented list — update the CLAUDE.md verification-command note accordingly) |
 | `app/lib/practice/queries.ts` | server | `getPracticeSkillStats()` (via new RPC), `getSkillPageData(skill)` |
 | `app/hooks/usePracticeSession.ts` | `'use client'` | Drill FSM (above) |
 
@@ -122,7 +124,9 @@ server-renderable), `SkillCatalog` (plain), `FocusAreaCard` (plain),
 `SkillDrill` + `DrillQuestion` + `DrillSummary` (`'use client'`).
 Mastery tiers used consistently: `<60%` Needs work (amber), `60–79%` Improving
 (blue), `≥80%` Strong (green); rendered as chips, computed by a small pure
-helper in `app/lib/practice/mastery.ts`.
+helper in `app/lib/practice/mastery.ts`. The tier chip is fed by **test
+accuracy** (the focus-area driver); a skill with no test answers renders a
+neutral "Not yet tested" chip instead of a tier.
 
 ### Integration touches (existing files)
 
@@ -134,8 +138,10 @@ helper in `app/lib/practice/mastery.ts`.
 ### Database (one migration, `20260707000000_sat_practice.sql`)
 
 - **`sat.practice_sessions`**: `id uuid pk`, `user_id`, `session_uuid uuid`,
-  `section`, `skill`, `total int`, `correct int`, `created_at`. Partial unique
-  `(user_id, session_uuid)` for idempotent resave.
+  `section`, `skill`, `total int`, `correct int`, `created_at`. Plain unique
+  `(user_id, session_uuid)` for idempotent resave (`session_uuid` is `not
+  null` — every client generates one, so no partial-index dance like
+  `attempt_uuid` needed).
 - **`sat.practice_responses`**: `id`, `session_id fk`, `user_id`, `position`,
   `question_id`, `skill`, `source`, `passage`, `prompt`, `choices jsonb`,
   `answer_index`, `explanation`, `chosen_index`, `is_correct`,
@@ -220,8 +226,9 @@ helper in `app/lib/practice/mastery.ts`.
 - `scripts/check-practice-payload.ts` — `toPracticePayload` shape; SPR rows
   pass with empty `choices`, MCQ rows with empty choices rejected; wire fields
   survive zod (strip-mode regression guard).
-- Existing gates: `pnpm type-check`, `pnpm lint`, `pnpm build`, plus the four
-  existing check scripts stay green.
+- Existing gates: `pnpm type-check`, `pnpm lint`, `pnpm build`, plus all
+  existing check scripts stay green (check-payload, check-analytics,
+  check-spr, check-scoring, check-retry, check-backup, check-assembly).
 - `usePracticeSession` remains script-untested (consistent with
   `useTestSession`); manual smoke via dev server before push.
 
