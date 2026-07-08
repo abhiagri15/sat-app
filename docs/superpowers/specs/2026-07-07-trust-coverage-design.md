@@ -36,22 +36,35 @@ for routing, explanation fetch post-submit.
   (open_flags ≥ 2, or n ≥ 10 with p < 0.15 or p > 0.97). NEVER touches
   `approved` (admin judgment outranks the heuristic) and NEVER reverses
   (only an admin clears). Called from `runGeneration()` beside
-  `calibrate_difficulty` on every daily tick; count added to
-  `GenerationSummary` as `flaggedForReview` (same -1-on-error posture).
+  `calibrate_difficulty` — which runs at **THREE return sites** (no-active-
+  students, gates-healthy, post-generation): add a `runFlagNeedsReview`
+  wrapper mirroring `runCalibration` and call it at all three; count added
+  to `GenerationSummary` as `flaggedForReview` (same -1-on-error posture).
 - **Draw filter:** `sat.draw_questions` gains `p_strict boolean default
-  false` (CREATE OR REPLACE preserves ACLs; new named param is
-  deploy-safe — old clients resolve fine). When true, adds `and
-  q.review_status <> 'needs_review'` to BOTH the fresh and recycled
-  branches. `app/lib/pool.ts`'s `rpcDraw` passes `p_strict: true`
-  unconditionally (every pool.ts draw is a scored test). `draw_drill` is
-  untouched.
+  false`. **CRITICAL: adding a defaulted param is a NEW OVERLOAD, not a
+  replacement** — if the old 5-arg version survives, PostgREST cannot
+  disambiguate pool.ts's 5-named-arg call against both candidates
+  (`PGRST203`) and EVERY scored draw fails. So: `drop function
+  sat.draw_questions(text, text, text[], text, int);` then recreate the
+  6-arg version with the FULL prior body (base `20260615010000` — verified
+  latest) plus `and (not p_strict or q.review_status <> 'needs_review')`
+  in BOTH the fresh and recycled branches, then RE-GRANT
+  `to authenticated, service_role` (DROP loses the ACL). Deploy-safety
+  comes from the default: the not-yet-deployed 5-named-arg client resolves
+  to the single 6-arg function. `app/lib/pool.ts`'s `rpcDraw` then passes
+  `p_strict: true` unconditionally (every pool.ts draw is a scored test).
+  `draw_drill` is untouched.
 - **Admin:** the `/admin/review` queue rows gain one-click **Approve** and
   **Clear** (→ active) server actions (`requireAdmin()` + service-role
   write, the `setQuestionEnabled` pattern); the question detail page shows
   a `review_status` badge + the same actions; `admin_review_queue` v2
-  returns `review_status` so the queue can show it (CREATE OR REPLACE not
-  possible — RETURNS TABLE changes → DROP + recreate + RE-GRANT to
-  service_role).
+  returns `review_status` — add it to BOTH the RETURNS TABLE and the
+  select projection (two places or the recreate fails to compile);
+  RETURNS TABLE change → DROP + recreate + RE-GRANT **exactly
+  `to service_role`** (never authenticated — students must not enumerate
+  suspect items). Extending `ReviewQueueRow`/`ReviewQueueRaw`/the map/the
+  page to SHOW the status is T3's scope (the RPC change alone is additive
+  and tolerated by the current mapper).
 - Explicitly NOT the five-state lifecycle: no `generated`/`practice_
   approved` states — at 4,600 items and current review capacity, universal
   human approval would make scored tests impossible; this design hard-gates
@@ -109,9 +122,15 @@ for routing, explanation fetch post-submit.
 - **Cleanup:** `e2e/global-teardown.ts` service-role deletes the test
   user's `test_attempts`, `practice_sessions`, `study_plans`,
   `served_questions`, `coach_explains` rows (STRICTLY scoped
-  `user_id = <test user id>`) so reruns never hit the daily attempt limit
-  and the account stays fresh. Never touches other users' rows or the
-  question pool.
+  `user_id = <test user id>`; child responses cascade — verified) so
+  reruns never hit the daily attempt limit and the account stays fresh.
+  Belt-and-suspenders: global-SETUP runs the same cleanup first, so a
+  prior crashed run (teardown never fired) cannot wedge the suite against
+  the daily cap. Never touches other users' rows or the question pool.
+  Notes for spec authors: StartScreen has NO name input (name comes from
+  the profile — do not script one); never assert exact remaining-time
+  strings (secsPerQ is fractional); module submission is button-driven so
+  no clock waits are needed.
 - **Specs (v1 flows):**
   1. `short-test.spec.ts` — start a short test; answer 2 (one via
      eliminator interaction), mark one for review; navigator badges;
