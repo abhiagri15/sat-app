@@ -7,7 +7,7 @@
 // never see it. Before hydration the link renders inert placeholder text.
 import { useEffect, useState } from 'react';
 
-const PARTS = ['abhishek15', 'gmail.com'] as const;
+const PARTS = ['vatekinc', 'gmail.com'] as const;
 
 export function ContactLink({ className }: { className?: string }) {
   const [href, setHref] = useState<string | null>(null);
