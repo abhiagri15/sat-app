@@ -11,6 +11,7 @@ import { lessonSchema } from '@/app/lib/ai/lesson-schema';
 import { guidanceSchema } from '@/app/lib/ai/guidance-schema';
 import { explanationSchema, mistakeKey } from '@/app/lib/ai/explanation-schema';
 import { generateBatchForSkill } from '@/app/lib/ai/generate';
+import { aiIsEnabled } from '@/app/lib/ai/kill-switch';
 import { parseSpr } from '@/app/lib/spr';
 import { createAdminClient } from '@/app/lib/supabase/admin';
 import type { SectionKey } from '@/app/lib/questions';
@@ -28,6 +29,15 @@ export const TOPUP_BATCH = 5;
 export const TOPUP_COOLDOWN_MIN = 30;
 // Per-(user, skill) guidance-regeneration cooldown, minutes.
 export const GUIDANCE_COOLDOWN_MIN = 10;
+// Shared per-skill lesson-retry cooldown, minutes (audit B2). A failing skill's
+// AI base-lesson generation is charge-BEFORE: an ai_attempts (kind='lesson',
+// key=skill) row is written before the Ollama call, and a retry within this
+// window returns the static-fallback shape WITHOUT generating. This bounds a
+// persistently-failing skill to ~6 Ollama attempts/hour TOTAL across ALL users
+// (the row is user-agnostic — user_id null), instead of the previous unbounded
+// re-fire on every LessonGenerating mount. Best-effort under concurrency (same
+// posture as the guidance/topup cooldowns — no lock).
+export const LESSON_RETRY_COOLDOWN_MIN = 10;
 // How many recent responses feed the guidance prompt as evidence.
 export const EVIDENCE_LIMIT = 12;
 // Max "Explain my mistake" calls per user per UTC day (design spec §E).
@@ -76,6 +86,54 @@ export async function ensureBaseLesson(
       return { status: 'failed' };
     }
     if (existing.data) return { status: 'exists' };
+
+    // Kill switch (audit C4). Disabled → the static lesson keeps serving; report
+    // 'failed' so the route/UI takes the graceful no-op path. Checked AFTER the
+    // existence read (a cached lesson still returns 'exists') but BEFORE the
+    // charge — a disabled call must make no Ollama call AND write no attempt row.
+    if (!(await aiIsEnabled(admin))) {
+      return { status: 'failed' };
+    }
+
+    // Charge-BEFORE cooldown (audit B2). A shared per-skill (kind='lesson',
+    // key=skill, user_id null) attempt within LESSON_RETRY_COOLDOWN_MIN means a
+    // recent attempt already fired (success would have created the row above and
+    // short-circuited at 'exists', so a hit here is a recent FAILURE) — return
+    // the static-fallback shape without generating. This is what bounds a
+    // persistently-failing skill's spend across all users.
+    const cutoffIso = new Date(
+      Date.now() - LESSON_RETRY_COOLDOWN_MIN * 60000,
+    ).toISOString();
+    const recent = await admin
+      .schema('sat')
+      .from('ai_attempts')
+      .select('id')
+      .eq('kind', 'lesson')
+      .eq('key', skill)
+      .gte('attempted_at', cutoffIso)
+      .limit(1)
+      .maybeSingle();
+    if (recent.error) {
+      console.error('[practice-gen] ensureBaseLesson cooldown read failed', recent.error);
+      return { status: 'failed' };
+    }
+    if (recent.data) {
+      // A recent attempt is cooling down — do not generate.
+      return { status: 'failed' };
+    }
+
+    // Charge FIRST: write the attempt row before the provider call so a failed
+    // (or killed) generation still consumes the cooldown slot. Shared per skill
+    // (user_id null). A logging failure here would leave the skill uncapped, so
+    // treat it as a hard failure rather than generating uncharged.
+    const charge = await admin
+      .schema('sat')
+      .from('ai_attempts')
+      .insert({ kind: 'lesson', key: skill, user_id: null });
+    if (charge.error) {
+      console.error('[practice-gen] ensureBaseLesson charge insert failed', charge.error);
+      return { status: 'failed' };
+    }
 
     const provider = getProvider();
 
@@ -155,6 +213,14 @@ export async function regenerateGuidance(
   try {
     const admin = createAdminClient();
 
+    // Kill switch (audit C4). Disabled → the previous guidance keeps rendering;
+    // report 'cooled_down' (the existing graceful no-generation shape) so the
+    // route returns ok without a 502. Checked before the charge so a disabled
+    // call makes no Ollama call AND writes no attempt row.
+    if (!(await aiIsEnabled(admin))) {
+      return { status: 'cooled_down' };
+    }
+
     // Cooldown check against generated_at (pk lookup).
     const existing = await admin
       .schema('sat')
@@ -171,6 +237,45 @@ export async function regenerateGuidance(
       const generatedAt = new Date(existing.data.generated_at as string).getTime();
       const ageMin = (Date.now() - generatedAt) / 60000;
       if (ageMin < GUIDANCE_COOLDOWN_MIN) return { status: 'cooled_down' };
+    }
+
+    // Charge-BEFORE cooldown (audit B2). The generated_at watermark above only
+    // caps regeneration once a guidance ROW exists — the first generation for a
+    // (user, skill) has no row yet, so a persistently-failing first generation
+    // would re-fire on every navigation. Cap it on ai_attempts (kind='guidance',
+    // key=skill, user_id=user) instead: a recent attempt within
+    // GUIDANCE_COOLDOWN_MIN → cooled_down without generating (closes the
+    // no-row-yet hole). This layers ON TOP of the watermark check above.
+    const cutoffIso = new Date(
+      Date.now() - GUIDANCE_COOLDOWN_MIN * 60000,
+    ).toISOString();
+    const recent = await admin
+      .schema('sat')
+      .from('ai_attempts')
+      .select('id')
+      .eq('kind', 'guidance')
+      .eq('key', skill)
+      .eq('user_id', userId)
+      .gte('attempted_at', cutoffIso)
+      .limit(1)
+      .maybeSingle();
+    if (recent.error) {
+      console.error('[practice-gen] regenerateGuidance cooldown read failed', recent.error);
+      return { status: 'failed' };
+    }
+    if (recent.data) {
+      return { status: 'cooled_down' };
+    }
+
+    // Charge FIRST: write the attempt row before the provider call so a failed
+    // (or killed) generation still consumes the cooldown slot.
+    const charge = await admin
+      .schema('sat')
+      .from('ai_attempts')
+      .insert({ kind: 'guidance', key: skill, user_id: userId });
+    if (charge.error) {
+      console.error('[practice-gen] regenerateGuidance charge insert failed', charge.error);
+      return { status: 'failed' };
     }
 
     const provider = getProvider();
@@ -249,6 +354,13 @@ export async function topupSkill(
 
     const admin = createAdminClient();
 
+    // Kill switch (audit C4). Disabled → skip like a healthy pool (no
+    // generation, no cooldown row). Checked before the pre-charge so a disabled
+    // call writes no practice_topups row.
+    if (!(await aiIsEnabled(admin))) {
+      return { status: 'skipped', reason: 'healthy' };
+    }
+
     // Cooldown: latest top-up run for this (user, skill).
     const last = await admin
       .schema('sat')
@@ -271,20 +383,39 @@ export async function topupSkill(
       }
     }
 
+    // Charge-BEFORE (audit B2): write the cooldown row FIRST, then generate.
+    // A killed function (e.g. maxDuration hit mid-batch) must NOT leave the
+    // cooldown un-armed — otherwise the next drill save re-fires a fresh
+    // ~21-call batch. `inserted` is NOT NULL DEFAULT 0, so a killed run
+    // legitimately leaves the row at 0; we UPDATE it with the real count after
+    // the batch (observability only). Capture the row id to update it.
+    const charge = await admin
+      .schema('sat')
+      .from('practice_topups')
+      .insert({ user_id: userId, skill })
+      .select('id')
+      .single();
+    if (charge.error || !charge.data) {
+      console.error('[practice-gen] topupSkill charge insert failed', charge.error);
+      return { status: 'failed' };
+    }
+    const topupId = (charge.data as { id: string }).id;
+
     // Generate through the shared batch pipeline (default difficulty mix —
     // difficulty-targeted top-up is explicitly deferred). generateBatchForSkill
     // inserts survivors itself and never throws.
     const batch = await generateBatchForSkill(section, skill, TOPUP_BATCH);
     const inserted = batch.accepted;
 
-    // Log the run (best-effort rate-cap trail). A logging failure must not mask
-    // the fact that questions were inserted.
-    const log = await admin
+    // Backfill the real inserted count on the pre-charged row (observability
+    // only). A failure here must not mask that questions were inserted.
+    const upd = await admin
       .schema('sat')
       .from('practice_topups')
-      .insert({ user_id: userId, skill, inserted });
-    if (log.error) {
-      console.error('[practice-gen] topupSkill log insert failed', log.error);
+      .update({ inserted })
+      .eq('id', topupId);
+    if (upd.error) {
+      console.error('[practice-gen] topupSkill inserted-count update failed', upd.error);
     }
 
     return { status: 'generated', inserted };
@@ -309,14 +440,19 @@ export type ExplainForUserResult =
 //     SELECT sat.mistake_explanations by (question_id, chosen_key). A HIT
 //     returns { status: 'ok', ..., cached: true } IMMEDIATELY — no daily-cap
 //     check, no AI call, no coach_explains log (a hit is free).
-//   - MISS: count today's (UTC) sat.coach_explains rows for the user (service
-//     role). At/over EXPLAIN_DAILY_CAP → { status: 'capped' } (no generation).
-//   - Otherwise provider.explainMistake → explanationSchema.safeParse (one
-//     retry on any failure) → CACHE WRITE (only for trusted-live inputs — a
-//     snapshot-sourced question's text is client-supplied, so it is never
-//     cached) via upsert with ignoreDuplicates (race-safe) → insert the log row
-//     (user_id, question_id) → { status: 'ok', ... }. A parse/generate failure
-//     after the retry → { status: 'failed' }.
+//   - MISS: the kill switch (audit C4) is checked HERE — a disabled call after
+//     a cache miss returns { status: 'failed' } without generating (a cache HIT
+//     above still serves, since it is free). Then count today's (UTC)
+//     sat.coach_explains rows for the user (service role). At/over
+//     EXPLAIN_DAILY_CAP → { status: 'capped' } (no generation).
+//   - Otherwise INSERT the coach_explains log row FIRST (charge-BEFORE, audit
+//     B2 — a failed/killed generation now consumes a cap slot; Retry can no
+//     longer re-hammer uncharged), then provider.explainMistake →
+//     explanationSchema.safeParse (one retry on any failure) → CACHE WRITE (only
+//     for trusted-live inputs — a snapshot-sourced question's text is
+//     client-supplied, so it is never cached) via upsert with ignoreDuplicates
+//     (race-safe) → { status: 'ok', ... }. A parse/generate failure after the
+//     retry → { status: 'failed' }.
 // The cap is best-effort under concurrency (see EXPLAIN_DAILY_CAP).
 export async function explainForUser(
   userId: string,
@@ -354,6 +490,13 @@ export async function explainForUser(
       };
     }
 
+    // Kill switch (audit C4). A cache MISS on a disabled call must not generate.
+    // Cache HITs above are unaffected (free). Report 'failed' — the route's
+    // existing graceful shape (502) for a non-generatable explain.
+    if (!(await aiIsEnabled(admin))) {
+      return { status: 'failed' };
+    }
+
     // UTC calendar-day window: [today 00:00Z, now]. head:exact count is a
     // single round trip that never pulls rows.
     const dayStart = new Date();
@@ -376,6 +519,19 @@ export async function explainForUser(
     // Strip the caller-only questionId before handing the LLM input to the
     // provider (the provider takes an ExplainInput, not the log key).
     const { questionId, ...llmInput } = input;
+
+    // Charge-BEFORE (audit B2): log the call FIRST so a failed/killed generation
+    // consumes a cap slot — Retry re-hammering a persistently-failing question
+    // can no longer run uncharged. A logging failure would leave the call
+    // uncharged, so treat it as a hard failure rather than generating uncharged.
+    const log = await admin
+      .schema('sat')
+      .from('coach_explains')
+      .insert({ user_id: userId, question_id: questionId });
+    if (log.error) {
+      console.error('[practice-gen] explainForUser charge insert failed', log.error);
+      return { status: 'failed' };
+    }
 
     for (let attempt = 0; attempt < 2; attempt++) {
       let content: unknown;
@@ -413,15 +569,9 @@ export async function explainForUser(
         }
       }
 
-      // Log the call (rate-cap trail). A logging failure must not mask a
-      // successful explanation — the response is already valid.
-      const log = await admin
-        .schema('sat')
-        .from('coach_explains')
-        .insert({ user_id: userId, question_id: questionId });
-      if (log.error) {
-        console.error('[practice-gen] explainForUser log insert failed', log.error);
-      }
+      // The coach_explains log row was already written BEFORE this loop
+      // (charge-before). No post-success insert here — a success and a failure
+      // both consume exactly one cap slot.
 
       return {
         status: 'ok',

@@ -28,6 +28,25 @@ export async function getDailyAttemptLimit(): Promise<number> {
   return (data as { daily_attempt_limit: number }).daily_attempt_limit;
 }
 
+// The app-wide AI kill switch (sat.app_config.ai_enabled). Read for the admin
+// settings toggle's default state. FAIL-OPEN: an unreadable/null value returns
+// true (matches aiIsEnabled in app/lib/ai/kill-switch.ts — an observability
+// read must never appear "disabled" by accident).
+export async function getAiEnabled(): Promise<boolean> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .schema('sat')
+    .from('app_config')
+    .select('ai_enabled')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error || !data) {
+    console.error('[getAiEnabled] failed:', error);
+    return true;
+  }
+  return (data as { ai_enabled: boolean | null }).ai_enabled !== false;
+}
+
 export interface AttemptUsage {
   used: number; // tests submitted today (UTC) by the signed-in user
   limit: number; // the app-wide daily limit

@@ -6,6 +6,7 @@ import { dedupHash } from './dedup';
 import { SKILLS } from '@/app/lib/questions';
 import { isSprCorrect } from '@/app/lib/spr';
 import { createAdminClient } from '@/app/lib/supabase/admin';
+import { aiIsEnabled } from '@/app/lib/ai/kill-switch';
 
 // Bounded per invocation to fit the serverless time budget. Each Ollama call
 // (~30-60s for DeepSeek) is slow: 1 skill x batch 3 = 1 generate + up to 3
@@ -77,9 +78,13 @@ export interface GenerationSummary {
   // active → needs_review this run by sat.flag_needs_review (open_flags >= 2,
   // or n >= 10 with p < 0.15 / p > 0.97). -1 on error — same wrapped posture
   // as `calibrated`, so a flagging failure never breaks the generation half of
-  // the cron. Runs on all three return paths beside calibration; excluded from
+  // the cron. Runs ONCE before generation beside calibration; excluded from
   // scored draws but still served by drills. Only runGeneration flags.
   flaggedForReview: number;
+  // Audit C4 (kill switch): false when sat.app_config.ai_enabled is off. When
+  // false, calibration + flagging (free SQL) and the run-ledger row still run,
+  // but no Ollama generation happens. Defaults true (fail-open).
+  aiEnabled: boolean;
 }
 
 // The fine-grained counters a single-target batch produces. These are the
@@ -416,8 +421,10 @@ export async function generateBatchForSkill(
 // Run the empirical difficulty calibration once per daily cron. Wrapped so a
 // failure never breaks the cron's generation half — returns -1 on error. Only
 // runGeneration calls this (the cron path); the top-up path never calibrates.
-// It runs on every daily tick regardless of whether generation fired, because
-// relabeling depends on accumulated student responses, not on new questions.
+// It runs ONCE per tick, BEFORE generation and BEFORE the kill-switch check
+// (audit C3) — cheap SQL that must not die behind a slow Ollama batch and must
+// not be silenced when AI is disabled — regardless of whether generation fires,
+// because relabeling depends on accumulated student responses, not new questions.
 async function runCalibration(
   admin: ReturnType<typeof createAdminClient>,
 ): Promise<number> {
@@ -438,8 +445,9 @@ async function runCalibration(
 // n >= 10 with p < 0.15 / p > 0.97). NEVER touches 'approved' and NEVER
 // reverses (only an admin clears). Wrapped like runCalibration so a failure
 // never breaks the cron's generation half — returns -1 on error. Only
-// runGeneration calls this; the top-up path never flags. Runs on every daily
-// tick regardless of whether generation fired, beside calibration.
+// runGeneration calls this; the top-up path never flags. Runs ONCE per tick,
+// BEFORE generation and BEFORE the kill-switch check (audit C3), beside
+// calibration, regardless of whether generation fired.
 async function runFlagNeedsReview(
   admin: ReturnType<typeof createAdminClient>,
 ): Promise<number> {
@@ -452,6 +460,52 @@ async function runFlagNeedsReview(
   } catch (e) {
     console.error('[generate] flag_needs_review error', e);
     return -1;
+  }
+}
+
+// Insert the started row of the run ledger (audit C3). Returns the row id so
+// every return path can stamp completed_at + the summary jsonb. A started row
+// that never gets its completed_at is the killed-run signal the admin health
+// card surfaces (a maxDuration kill mid-batch, or the generator_state throw
+// path below — both leave the row started-but-never-completed). If the insert
+// itself fails, generation still proceeds (the ledger is observability, not a
+// gate) and completeRun is a no-op on a null id.
+async function startRun(
+  admin: ReturnType<typeof createAdminClient>,
+): Promise<string | null> {
+  try {
+    const { data, error } = await admin
+      .schema('sat')
+      .from('generation_runs')
+      .insert({})
+      .select('id')
+      .single();
+    if (error || !data) throw error ?? new Error('generation_runs insert returned null');
+    return (data as { id: string }).id;
+  } catch (e) {
+    console.error('[generate] startRun insert failed', e);
+    return null;
+  }
+}
+
+// Stamp completed_at + the summary jsonb on the run-ledger row. Best-effort —
+// a ledger failure must never mask a completed run. No-op on a null id (the
+// started insert failed).
+async function completeRun(
+  admin: ReturnType<typeof createAdminClient>,
+  runId: string | null,
+  summary: GenerationSummary,
+): Promise<void> {
+  if (!runId) return;
+  try {
+    const { error } = await admin
+      .schema('sat')
+      .from('generation_runs')
+      .update({ completed_at: new Date().toISOString(), summary })
+      .eq('id', runId);
+    if (error) console.error('[generate] completeRun update failed', error);
+  } catch (e) {
+    console.error('[generate] completeRun unexpected error', e);
   }
 }
 
@@ -470,11 +524,37 @@ export async function runGeneration(): Promise<GenerationSummary> {
     repairedMultiValid: 0,
     calibrated: 0,
     flaggedForReview: 0,
+    aiEnabled: true,
   };
 
-  // 1. Single-call snapshot — same one the n8n workflow uses. Keeps the two
+  // 1. Run ledger (audit C3): write the started row FIRST. Its completed_at
+  //    is stamped on EVERY return path below; a row left uncompleted is the
+  //    killed-run signal (a maxDuration kill, or the generator_state throw).
+  const runId = await startRun(admin);
+
+  // 2. Calibration + auto-flagging run ONCE, HERE — BEFORE generation and
+  //    BEFORE the kill-switch check. They are cheap SQL that must not die
+  //    behind a slow Ollama batch (audit C3) and must not be silenced by the
+  //    kill switch (disabling AI still calibrates + flags). Both wrapped so a
+  //    failure returns -1 and never breaks the run.
+  summary.calibrated = await runCalibration(admin);
+  summary.flaggedForReview = await runFlagNeedsReview(admin);
+
+  // 3. Kill switch (audit C4). Disabled → no Ollama generation this run, but
+  //    the calibration/flagging above already ran and the run row is still
+  //    completed. Return the summary noting aiEnabled=false.
+  if (!(await aiIsEnabled(admin))) {
+    summary.aiEnabled = false;
+    await completeRun(admin, runId, summary);
+    return summary;
+  }
+
+  // 4. Single-call snapshot — same one the n8n workflow uses. Keeps the two
   //    drivers in lockstep on the floor, buffer target, and per-cell counts.
   //    null minActiveUserUnseen means no active students yet → nothing to do.
+  //    The throw path (generator_state returns null/errors) deliberately leaves
+  //    the run row started-but-never-completed — it shares the killed-run
+  //    signal, which is the right thing to surface.
   const { data, error } = await admin.schema('sat').rpc('generator_state');
   if (error || !data) throw error ?? new Error('generator_state returned null');
   const state = data as unknown as GeneratorState;
@@ -482,12 +562,11 @@ export async function runGeneration(): Promise<GenerationSummary> {
   summary.bufferTarget = state.bufferTarget;
   summary.neverServedFloor = state.neverServedFloor;
   if (state.minActiveUserUnseen === null) {
-    summary.calibrated = await runCalibration(admin);
-    summary.flaggedForReview = await runFlagNeedsReview(admin);
+    await completeRun(admin, runId, summary);
     return summary;
   }
 
-  // 2. Lookup maps: worst student's unseen count per skill and per cell.
+  // 5. Lookup maps: worst student's unseen count per skill and per cell.
   //    Skills/cells missing from the RPC default to 0 — that skill has no
   //    enabled questions at all, so every student is at 0 for it.
   const skillWorst = new Map<string, number>();
@@ -499,7 +578,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
     cellWorst.set(`${c.section}|${c.skill}|${c.difficulty}`, c.worstStudentUnseen);
   }
 
-  // 3. Per-skill floor gate. Any skill where the worst-off student has fewer
+  // 6. Per-skill floor gate. Any skill where the worst-off student has fewer
   //    unseen questions than the floor triggers replenishment for that skill.
   const belowFloor = (['rw', 'math'] as const).some((section) =>
     SKILLS[section].some(
@@ -508,17 +587,16 @@ export async function runGeneration(): Promise<GenerationSummary> {
     ),
   );
 
-  // 4. Dual gate: skip iff the overall per-user buffer is healthy AND every
+  // 7. Dual gate: skip iff the overall per-user buffer is healthy AND every
   //    skill is at or above the floor for every active student. Either
   //    condition failing keeps the run going.
   const bufferHealthy = state.minActiveUserUnseen >= state.bufferTarget;
   if (bufferHealthy && !belowFloor) {
-    summary.calibrated = await runCalibration(admin);
-    summary.flaggedForReview = await runFlagNeedsReview(admin);
+    await completeRun(admin, runId, summary);
     return summary;
   }
 
-  // 5. Picker: pick the SKILL with the lowest worst-student-unseen. Within
+  // 8. Picker: pick the SKILL with the lowest worst-student-unseen. Within
   //    that skill, target the DIFFICULTY cell where the worst-student-unseen
   //    is lowest — that keeps each skill growing balanced across E/M/H so
   //    the adaptive engine has stock at every level for the affected student.
@@ -550,7 +628,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
     return { section: s.section, skill: s.skill, difficulty: bestDiff };
   });
 
-  // 6. generate, gate, insert. SPR (math-only) is requested with a per-target
+  // 9. generate, gate, insert. SPR (math-only) is requested with a per-target
   //    coin-flip at SPR_PROBABILITY; mcq otherwise. R&W always mcq. Each
   //    target runs the extracted generateBatchForSkill pipeline; its
   //    fine-grained counters are re-aggregated here so the JSON summary is
@@ -568,10 +646,8 @@ export async function runGeneration(): Promise<GenerationSummary> {
     summary.repairedMultiValid += batch.repairedMultiValid;
   }
 
-  // 7. Empirical difficulty calibration + auto-flagging — after the generation
-  //    work, on the cron path only. Both wrapped (return -1 on error) so they
-  //    never break the run.
-  summary.calibrated = await runCalibration(admin);
-  summary.flaggedForReview = await runFlagNeedsReview(admin);
+  // 10. Stamp the ledger row complete and return. Calibration + flagging
+  //     already ran in step 2 (they no longer sit behind the generation work).
+  await completeRun(admin, runId, summary);
   return summary;
 }

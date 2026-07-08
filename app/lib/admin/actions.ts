@@ -156,6 +156,28 @@ export async function setNeverServedFloor(formData: FormData): Promise<void> {
   revalidatePath('/admin');
 }
 
+// Toggle the app-wide AI kill switch (sat.app_config.ai_enabled, audit C4).
+// Admin-only; writes via the service-role client (app_config has no write
+// policy). Follows the setDailyAttemptLimit pattern. The checkbox posts "on"
+// only when checked, so its ABSENCE means off — do not treat a missing field
+// as an error. When disabled, runGeneration still calibrates/flags + writes its
+// run row, and every expensive AI entry point returns its graceful no-op shape.
+export async function setAiEnabled(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const enabled = formData.get('ai_enabled') === 'on';
+  const admin = createAdminClient();
+  const { error } = await admin
+    .schema('sat')
+    .from('app_config')
+    .update({ ai_enabled: enabled, updated_at: new Date().toISOString() })
+    .eq('id', 1);
+  if (error) {
+    console.error('[setAiEnabled] failed:', error);
+    throw new Error('Failed to update the AI setting.');
+  }
+  revalidatePath('/admin/settings');
+}
+
 // Update the app-wide daily test-attempt limit (sat.app_config). Admin-only;
 // writes via the service-role client (app_config has no write policy).
 export async function setDailyAttemptLimit(formData: FormData): Promise<void> {

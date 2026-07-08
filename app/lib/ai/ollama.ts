@@ -18,6 +18,14 @@ const MISS_REASON_PHRASE: Record<string, string> = Object.fromEntries(
 
 const BASE_URL = process.env.OLLAMA_BASE_URL ?? 'https://ollama.com';
 
+// Per-call timeout (audit C3). One hung Ollama Cloud call must not eat the
+// whole 300s serverless function budget — a batch of self-verify/repair calls
+// would then silently starve behind it. On timeout the AbortController aborts
+// the fetch and chat() throws a normal provider Error; the existing
+// retry/fallback paths (generateBatchForSkill's one-retry, the two-attempt
+// loops in generation.ts) handle it exactly like any other provider failure.
+const CHAT_TIMEOUT_MS = 120_000;
+
 interface ChatResponse {
   choices?: { message?: { content?: string } }[];
 }
@@ -28,23 +36,38 @@ async function chat(content: string): Promise<string> {
   if (!apiKey) throw new Error('OLLAMA_API_KEY is not set');
   if (!model) throw new Error('SAT_AI_MODEL is not set');
 
-  const res = await fetch(`${BASE_URL}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content }],
-      stream: false,
-      // Reasoning models burn completion budget on in-band planning before
-      // the JSON appears; the long figure prompt was getting truncated
-      // mid-thought under the provider default. Explicit headroom fixes the
-      // truncation; prompts that finish early are unaffected.
-      max_tokens: 8192,
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content }],
+        stream: false,
+        // Reasoning models burn completion budget on in-band planning before
+        // the JSON appears; the long figure prompt was getting truncated
+        // mid-thought under the provider default. Explicit headroom fixes the
+        // truncation; prompts that finish early are unaffected.
+        max_tokens: 8192,
+      }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    // An abort surfaces as a DOMException/AbortError — rethrow as a clear
+    // timeout error the retry/fallback paths treat like any provider failure.
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`Ollama Cloud request timed out after ${CHAT_TIMEOUT_MS}ms`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) {
     throw new Error(`Ollama Cloud ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }

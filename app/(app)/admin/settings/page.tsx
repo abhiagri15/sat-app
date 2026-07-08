@@ -1,10 +1,15 @@
-import { getDailyAttemptLimit, getModule2Thresholds } from '@/app/lib/config';
-import { setDailyAttemptLimit, setModule2Thresholds } from '@/app/lib/admin/actions';
+import { getDailyAttemptLimit, getModule2Thresholds, getAiEnabled } from '@/app/lib/config';
+import {
+  setDailyAttemptLimit,
+  setModule2Thresholds,
+  setAiEnabled,
+} from '@/app/lib/admin/actions';
 
 // Admin settings. Under (app)/admin/layout.tsx, so requireAdmin() gates it.
 export default async function AdminSettingsPage() {
   const limit = await getDailyAttemptLimit();
   const thresholds = await getModule2Thresholds();
+  const aiEnabled = await getAiEnabled();
 
   return (
     <main className="mx-auto max-w-2xl p-6">
@@ -39,6 +44,38 @@ export default async function AdminSettingsPage() {
           <button
             type="submit"
             className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+
+      <form
+        action={setAiEnabled}
+        className="mt-4 rounded-lg border border-slate-200 p-4"
+      >
+        <h2 className="text-sm font-medium text-slate-700">AI generation</h2>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Global kill switch for AI question/lesson/coaching generation. When
+          off, the daily cron still calibrates difficulty and flags suspect
+          items, but no new Ollama calls are made — lessons fall back to the
+          static content and coaching is skipped. Cached explanations still
+          serve (they are free).
+        </p>
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            id="ai_enabled"
+            name="ai_enabled"
+            type="checkbox"
+            defaultChecked={aiEnabled}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          <label htmlFor="ai_enabled" className="text-sm text-slate-700">
+            Enable AI generation
+          </label>
+          <button
+            type="submit"
+            className="ml-auto rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
           >
             Save
           </button>
