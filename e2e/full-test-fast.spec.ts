@@ -37,8 +37,10 @@ test('full test: adaptive module transition, mandatory break, resume early, resu
   await answerTwoAndSubmitModule(page);
 
   // The adaptive Module 2 is drawn lazily after Module-1 submit; it can take a
-  // moment (RPC). Assert the transition to Module 2 landed.
-  await expect(page.getByText(/Module 2 of 2/)).toBeVisible({ timeout: 60_000 });
+  // moment (RPC). Assert the transition to Module 2 landed. `.first()`: for one
+  // effect-flush after the draw resolves, the header chip AND the still-open
+  // Check Your Work subtitle both read "Module 2 of 2" (strict-mode trap).
+  await expect(page.getByText(/Module 2 of 2/).first()).toBeVisible({ timeout: 60_000 });
   await answerTwoAndSubmitModule(page);
 
   // After the LAST R&W module submits, the mandatory 10-minute break appears.
@@ -52,7 +54,8 @@ test('full test: adaptive module transition, mandatory break, resume early, resu
   // Math Module 1 → Module 2 → submit test.
   await expect(page.getByText(/Module 1 of/)).toBeVisible({ timeout: 60_000 });
   await answerTwoAndSubmitModule(page);
-  await expect(page.getByText(/Module 2 of 2/)).toBeVisible({ timeout: 60_000 });
+  // Same one-frame duplicate-text window as the R&W transition above.
+  await expect(page.getByText(/Module 2 of 2/).first()).toBeVisible({ timeout: 60_000 });
   await answerTwoAndSubmitModule(page);
 
   // Results.
