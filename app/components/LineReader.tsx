@@ -95,7 +95,13 @@ export function LineReader({ containerRef, onClose }: LineReaderProps) {
   const bandBottom = bandTop + bandHeight;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-10" aria-hidden="true">
+    <div
+      className="pointer-events-none absolute inset-0 z-10"
+      aria-hidden="true"
+      // E2E hook: the band is a purely visual, aria-hidden overlay with no role
+      // or text, so a test-id is the only stable selector for it.
+      data-testid="line-reader"
+    >
       {/* Dim mask ABOVE the band. */}
       <div
         className="absolute inset-x-0 top-0 bg-slate-900/40"
