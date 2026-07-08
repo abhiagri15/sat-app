@@ -17,6 +17,7 @@ export interface AdminQuestion {
   classified_at: string | null;                // Sub-project #11
   figure: unknown | null;                       // Sub-project #15: figure spec (jsonb)
   difficulty_source: 'model' | 'empirical';     // Sub-project #15: model-labeled vs empirically calibrated
+  review_status: 'active' | 'approved' | 'needs_review'; // #19 Trust & Coverage: content-trust gate (orthogonal to enabled)
 }
 
 export interface PoolCounts {
@@ -36,7 +37,7 @@ export interface QuestionFilters {
 }
 
 const QUESTION_COLUMNS =
-  'id, section, skill, passage, prompt, choices, answer_index, explanation, source, enabled, created_at, difficulty, classified_at, figure, difficulty_source';
+  'id, section, skill, passage, prompt, choices, answer_index, explanation, source, enabled, created_at, difficulty, classified_at, figure, difficulty_source, review_status';
 
 // The question pool, newest first, filtered, capped at 200 rows.
 export async function listQuestions(
@@ -192,6 +193,7 @@ export interface ReviewQueueRow {
   section: 'rw' | 'math';
   skill: string;
   difficulty: 'easy' | 'medium' | 'hard';
+  review_status: 'active' | 'approved' | 'needs_review';
   n: number;
   p_value: number | null;
   open_flags: number;
@@ -204,6 +206,7 @@ interface ReviewQueueRaw {
   section: 'rw' | 'math';
   skill: string;
   difficulty: 'easy' | 'medium' | 'hard';
+  review_status: 'active' | 'approved' | 'needs_review';
   n: number | string;
   p_value: number | string | null;
   open_flags: number | string;
@@ -243,6 +246,7 @@ export async function getReviewQueue(limit = 50): Promise<ReviewQueueRow[]> {
     section: r.section,
     skill: r.skill,
     difficulty: r.difficulty,
+    review_status: r.review_status,
     n: Number(r.n),
     p_value: r.p_value == null ? null : Number(r.p_value),
     open_flags: Number(r.open_flags),

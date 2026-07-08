@@ -132,6 +132,9 @@ async function rpcDraw(
     p_skills: skills,
     p_difficulty: difficulty,
     p_count: count,
+    // Every pool.ts draw feeds a SCORED test — strict mode excludes
+    // needs_review items (design spec §A). Drills use draw_drill (untouched).
+    p_strict: true,
   });
   if (error) {
     throw new Error(

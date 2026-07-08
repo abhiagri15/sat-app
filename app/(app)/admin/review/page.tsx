@@ -4,15 +4,39 @@ import {
   type ReviewQueueRow,
   type ReviewReason,
 } from '@/app/lib/admin/queries';
+import { setReviewStatus } from '@/app/lib/admin/actions';
 
-// Admin needs-review queue (design spec §D). The admin layout gates this route
-// (requireAdmin() 404s non-admins), so this page just renders the computed
-// queue. Each row links to /admin/questions/[id] where the disable toggle and
-// item stats live. Empty state when nothing qualifies (also the graceful
-// degradation path when the RPC isn't migrated yet — getReviewQueue returns []).
+// Admin needs-review queue (design spec §D / #19 Trust & Coverage). The admin
+// layout gates this route (requireAdmin() 404s non-admins), so this page just
+// renders the computed queue. Each row links to /admin/questions/[id] where the
+// disable toggle and item stats live, shows the content-trust review_status
+// badge, and offers one-click Approve / Clear (→ active) actions. Empty state
+// when nothing qualifies (also the graceful degradation path when the RPC isn't
+// migrated yet — getReviewQueue returns []).
 
 function excerpt(s: string, n = 90): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
+}
+
+// Content-trust status badge (#19). approved = green (admin-blessed),
+// needs_review = amber (machine-flagged, excluded from scored draws),
+// active = slate (the drawable default).
+const STATUS_BADGE: Record<
+  'active' | 'approved' | 'needs_review',
+  { label: string; className: string }
+> = {
+  approved: { label: 'Approved', className: 'bg-emerald-100 text-emerald-700' },
+  needs_review: { label: 'Needs review', className: 'bg-amber-100 text-amber-800' },
+  active: { label: 'Active', className: 'bg-slate-100 text-slate-600' },
+};
+
+function StatusBadge({ status }: { status: 'active' | 'approved' | 'needs_review' }) {
+  const b = STATUS_BADGE[status];
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${b.className}`}>
+      {b.label}
+    </span>
+  );
 }
 
 // One reason chip per fired reason. 'flagged' collapses the open-flags count
@@ -63,7 +87,8 @@ export default async function AdminReviewPage() {
       <h1 className="mb-1 text-2xl font-bold">Needs review</h1>
       <p className="text-sm text-slate-500">
         Item-quality anomalies: heavily flagged, or pathologically hard/easy over
-        enough responses. This is a computed queue — no lifecycle state.
+        enough responses. Approve blesses an item; Clear returns it to active
+        (drawable in scored tests again).
       </p>
 
       <div className="mt-6 space-y-2">
@@ -71,31 +96,55 @@ export default async function AdminReviewPage() {
           <p className="text-sm text-slate-500">Nothing needs review.</p>
         ) : (
           queue.map((row) => (
-            <Link
+            <div
               key={row.question_id}
-              href={`/admin/questions/${row.question_id}`}
-              className="block rounded-lg border border-slate-200 p-3 transition hover:border-blue-300 hover:bg-blue-50"
+              className="rounded-lg border border-slate-200 p-3"
             >
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-700">
-                  {row.section === 'rw' ? 'R&W' : 'Math'}
-                </span>
-                <span className="text-slate-600">{row.skill}</span>
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">
-                  {row.difficulty}
-                </span>
-                <ReasonChips row={row} />
+              <Link
+                href={`/admin/questions/${row.question_id}`}
+                className="block rounded-md transition hover:bg-blue-50"
+              >
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-700">
+                    {row.section === 'rw' ? 'R&W' : 'Math'}
+                  </span>
+                  <span className="text-slate-600">{row.skill}</span>
+                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">
+                    {row.difficulty}
+                  </span>
+                  <StatusBadge status={row.review_status} />
+                  <ReasonChips row={row} />
+                </div>
+                <p className="mt-2 text-sm text-slate-800">{excerpt(row.prompt)}</p>
+                <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
+                  <span>n = {row.n}</span>
+                  <span>
+                    p ={' '}
+                    {row.p_value == null ? '—' : row.p_value.toFixed(2)}
+                  </span>
+                  <span>open flags: {row.open_flags}</span>
+                </div>
+              </Link>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <form action={setReviewStatus.bind(null, row.question_id, 'approved')}>
+                  <button
+                    type="submit"
+                    className="rounded bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+                  >
+                    Approve
+                  </button>
+                </form>
+                <form action={setReviewStatus.bind(null, row.question_id, 'active')}>
+                  <button
+                    type="submit"
+                    className="rounded bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
+                  >
+                    Clear
+                  </button>
+                </form>
               </div>
-              <p className="mt-2 text-sm text-slate-800">{excerpt(row.prompt)}</p>
-              <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
-                <span>n = {row.n}</span>
-                <span>
-                  p ={' '}
-                  {row.p_value == null ? '—' : row.p_value.toFixed(2)}
-                </span>
-                <span>open flags: {row.open_flags}</span>
-              </div>
-            </Link>
+            </div>
           ))
         )}
       </div>

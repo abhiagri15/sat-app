@@ -26,6 +26,36 @@ export async function setQuestionEnabled(
   revalidatePath(`/admin/questions/${id}`);
 }
 
+// Set the content-trust review status on a pool question (#19 Trust & Coverage).
+// Admin-only; writes via the service-role client (sat.questions is RLS
+// write-locked). Only the two ADMIN-settable targets are allowed here —
+// 'needs_review' is machine-set by sat.flag_needs_review and must never be an
+// admin action (Approve blesses an item; Clear returns a flagged item to
+// 'active'). Follows the setQuestionEnabled pattern. review_status is
+// orthogonal to `enabled`: only 'needs_review' is excluded from scored draws
+// (via draw_questions p_strict), and only for scored tests — drills still serve it.
+export async function setReviewStatus(
+  questionId: string,
+  status: 'active' | 'approved',
+): Promise<void> {
+  await requireAdmin();
+  if (status !== 'active' && status !== 'approved') {
+    throw new Error('Invalid review status.');
+  }
+  const admin = createAdminClient();
+  const { error } = await admin
+    .schema('sat')
+    .from('questions')
+    .update({ review_status: status })
+    .eq('id', questionId);
+  if (error) {
+    console.error('[setReviewStatus] failed:', error);
+    throw new Error('Failed to update the review status.');
+  }
+  revalidatePath('/admin/review');
+  revalidatePath(`/admin/questions/${questionId}`);
+}
+
 // Update the per-section Module 2 routing thresholds. Admin-only; writes
 // via the service-role client. Sub-project #11 follow-up.
 export async function setModule2Thresholds(formData: FormData): Promise<void> {

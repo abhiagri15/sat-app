@@ -73,6 +73,13 @@ export interface GenerationSummary {
   // of the cron. Only runGeneration (the cron path) calibrates; the top-up
   // path (generateBatchForSkill) never does.
   calibrated: number;
+  // Trust & Coverage (design spec §A): count of questions auto-flagged
+  // active → needs_review this run by sat.flag_needs_review (open_flags >= 2,
+  // or n >= 10 with p < 0.15 / p > 0.97). -1 on error — same wrapped posture
+  // as `calibrated`, so a flagging failure never breaks the generation half of
+  // the cron. Runs on all three return paths beside calibration; excluded from
+  // scored draws but still served by drills. Only runGeneration flags.
+  flaggedForReview: number;
 }
 
 // The fine-grained counters a single-target batch produces. These are the
@@ -426,6 +433,28 @@ async function runCalibration(
   }
 }
 
+// Auto-flag suspect items (design spec §A) — sets active → needs_review for
+// enabled questions matching the review-queue criteria (open_flags >= 2, or
+// n >= 10 with p < 0.15 / p > 0.97). NEVER touches 'approved' and NEVER
+// reverses (only an admin clears). Wrapped like runCalibration so a failure
+// never breaks the cron's generation half — returns -1 on error. Only
+// runGeneration calls this; the top-up path never flags. Runs on every daily
+// tick regardless of whether generation fired, beside calibration.
+async function runFlagNeedsReview(
+  admin: ReturnType<typeof createAdminClient>,
+): Promise<number> {
+  try {
+    const { data, error } = await admin
+      .schema('sat')
+      .rpc('flag_needs_review');
+    if (error || data == null) throw error ?? new Error('flag_needs_review returned null');
+    return Number(data);
+  } catch (e) {
+    console.error('[generate] flag_needs_review error', e);
+    return -1;
+  }
+}
+
 export async function runGeneration(): Promise<GenerationSummary> {
   const admin = createAdminClient();
   const summary: GenerationSummary = {
@@ -440,6 +469,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
     rejectedMultiValid: 0,
     repairedMultiValid: 0,
     calibrated: 0,
+    flaggedForReview: 0,
   };
 
   // 1. Single-call snapshot — same one the n8n workflow uses. Keeps the two
@@ -453,6 +483,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
   summary.neverServedFloor = state.neverServedFloor;
   if (state.minActiveUserUnseen === null) {
     summary.calibrated = await runCalibration(admin);
+    summary.flaggedForReview = await runFlagNeedsReview(admin);
     return summary;
   }
 
@@ -483,6 +514,7 @@ export async function runGeneration(): Promise<GenerationSummary> {
   const bufferHealthy = state.minActiveUserUnseen >= state.bufferTarget;
   if (bufferHealthy && !belowFloor) {
     summary.calibrated = await runCalibration(admin);
+    summary.flaggedForReview = await runFlagNeedsReview(admin);
     return summary;
   }
 
@@ -536,8 +568,10 @@ export async function runGeneration(): Promise<GenerationSummary> {
     summary.repairedMultiValid += batch.repairedMultiValid;
   }
 
-  // 7. Empirical difficulty calibration — after the generation work, on the
-  //    cron path only. Wrapped (returns -1 on error) so it never breaks the run.
+  // 7. Empirical difficulty calibration + auto-flagging — after the generation
+  //    work, on the cron path only. Both wrapped (return -1 on error) so they
+  //    never break the run.
   summary.calibrated = await runCalibration(admin);
+  summary.flaggedForReview = await runFlagNeedsReview(admin);
   return summary;
 }

@@ -1,7 +1,11 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getQuestion, getQuestionItemStats } from '@/app/lib/admin/queries';
-import { setQuestionEnabled, setQuestionDifficulty } from '@/app/lib/admin/actions';
+import {
+  setQuestionEnabled,
+  setQuestionDifficulty,
+  setReviewStatus,
+} from '@/app/lib/admin/actions';
 import { LETTERS } from '@/app/lib/test';
 import { FigureView } from '@/app/components/FigureView';
 
@@ -9,6 +13,17 @@ const DIFFICULTY_BADGE: Record<'easy' | 'medium' | 'hard', string> = {
   easy:   'bg-blue-100 text-blue-700',
   medium: 'bg-slate-200 text-slate-700',
   hard:   'bg-amber-100 text-amber-800',
+};
+
+// #19 Trust & Coverage content-trust status badge (approved = green,
+// needs_review = amber, active = slate). Orthogonal to enabled.
+const REVIEW_STATUS_BADGE: Record<
+  'active' | 'approved' | 'needs_review',
+  { label: string; className: string }
+> = {
+  approved:     { label: 'Approved',     className: 'bg-emerald-100 text-emerald-700' },
+  needs_review: { label: 'Needs review', className: 'bg-amber-100 text-amber-800' },
+  active:       { label: 'Active',        className: 'bg-slate-100 text-slate-600' },
 };
 
 async function updateDifficulty(id: string, formData: FormData): Promise<void> {
@@ -67,6 +82,11 @@ export default async function AdminQuestionPage({
             Disabled
           </span>
         )}
+        <span
+          className={`rounded-full px-2 py-0.5 font-medium ${REVIEW_STATUS_BADGE[q.review_status].className}`}
+        >
+          {REVIEW_STATUS_BADGE[q.review_status].label}
+        </span>
         {q.classified_at === null && (
           <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-yellow-800">
             unclassified
@@ -168,6 +188,28 @@ export default async function AdminQuestionPage({
             {q.enabled ? 'Disable this question' : 'Enable this question'}
           </button>
         </form>
+
+        {/* #19 Trust & Coverage content-trust actions. Approve blesses the item;
+            Clear returns it to 'active' (drawable in scored tests again).
+            'needs_review' is machine-set only — not an admin action here. */}
+        <div className="flex items-end gap-2">
+          <form action={setReviewStatus.bind(null, q.id, 'approved')}>
+            <button
+              type="submit"
+              className="rounded bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+            >
+              Approve
+            </button>
+          </form>
+          <form action={setReviewStatus.bind(null, q.id, 'active')}>
+            <button
+              type="submit"
+              className="rounded bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200"
+            >
+              Clear
+            </button>
+          </form>
+        </div>
 
         <form action={updateDifficulty.bind(null, q.id)} className="flex items-end gap-2">
           <label className="flex flex-col text-xs text-slate-600">
