@@ -24,8 +24,14 @@ const attemptResponseSchema = z
     // off the payload. timeMs is capped at TIME_MS_CAP (600000) at capture;
     // this bound is the airtight backstop (over-cap is rejected). figure is the
     // structured spec (Task 5 narrows it) or null.
-    timeMs: z.number().int().min(0).max(600000).nullable(),
-    figure: z.unknown().nullable(),
+    // BOTH must be .optional(): a tab loaded before the #15 deploy builds the
+    // old payload shape with NO timeMs/figure keys, and nullable-without-
+    // optional rejects the whole save as terminal invalid_payload (two real
+    // student attempts were lost this way on 2026-07-07 — see save_failures).
+    // The RPC coalesces an absent key to null. EVERY future additive wire
+    // field must be .optional() for the same reason.
+    timeMs: z.number().int().min(0).max(600000).nullable().optional(),
+    figure: z.unknown().nullable().optional(),
     // SPR (Format Parity) fields. Listed so zod's strip mode does NOT drop them —
     // sat.save_attempt reads responseFormat + enteredValue off the payload.
     responseFormat: z.enum(['mcq', 'spr']).optional(),

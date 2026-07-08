@@ -136,4 +136,19 @@ assert(
   'timeMs of 600001 (over TIME_MS_CAP) is rejected',
 );
 
+// --- Assertion 6: stale-tab back-compat — no timeMs/figure keys is ACCEPTED --
+// A pre-#15 tab sends drill payloads without the timing/figure keys; the
+// schema must accept the old shape (the 2026-07-07 lost-attempt bug class).
+const oldClient = structuredClone(payload);
+oldClient.responses = oldClient.responses.map((r) => {
+  const clone = { ...r } as Record<string, unknown>;
+  delete clone.timeMs;
+  delete clone.figure;
+  return clone as unknown as (typeof oldClient.responses)[number];
+});
+assert(
+  practicePayloadSchema.safeParse(oldClient).success,
+  'old-client payload (no timeMs/figure keys) is ACCEPTED',
+);
+
 console.log(`\ncheck-practice-payload: ${count} assertions passed`);

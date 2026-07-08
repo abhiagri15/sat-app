@@ -19,9 +19,13 @@ const practiceResponseSchema = z
     answerTolerance: z.number().nullable(),
     // Sub-project #15: per-question timing + figure snapshot. Listed so zod's
     // strip mode does NOT drop them — sat.save_practice reads timeMs + figure
-    // off the payload. Same bound + shape as the attempt schema.
-    timeMs: z.number().int().min(0).max(600000).nullable(),
-    figure: z.unknown().nullable(),
+    // off the payload. Same bound + shape as the attempt schema. .optional()
+    // is load-bearing back-compat: a pre-#15 tab sends payloads with NO
+    // timeMs/figure keys, and nullable-without-optional would reject the whole
+    // drill save (the stale-tab bug that lost two test attempts on
+    // 2026-07-07). EVERY future additive wire field must be .optional().
+    timeMs: z.number().int().min(0).max(600000).nullable().optional(),
+    figure: z.unknown().nullable().optional(),
   })
   .refine((r) => r.responseFormat === 'spr' || r.choices.length >= 1, {
     message: 'mcq responses need at least one choice',

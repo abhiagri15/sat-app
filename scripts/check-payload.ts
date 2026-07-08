@@ -163,6 +163,23 @@ assert(
   'timeMs of 600001 (over TIME_MS_CAP) is rejected',
 );
 
+// --- Stale-tab back-compat (the 2026-07-07 lost-attempt bug) ----------------
+// A tab loaded before the #15 deploy sends responses with NO timeMs/figure
+// keys at all. nullable-without-optional rejected the whole save as terminal
+// invalid_payload and two real student attempts were lost. The schema must
+// accept the old shape (the RPC coalesces absent keys to null).
+const oldClientPayload = toAttemptPayload(test, responses, results, 'short', false, timesMs);
+oldClientPayload.responses = oldClientPayload.responses.map((r) => {
+  const clone = { ...r } as Record<string, unknown>;
+  delete clone.timeMs;
+  delete clone.figure;
+  return clone as unknown as (typeof oldClientPayload.responses)[number];
+});
+assert(
+  attemptPayloadSchema.safeParse(oldClientPayload).success,
+  'old-client payload (no timeMs/figure keys) is ACCEPTED',
+);
+
 // --- Shared isAnswered predicate (audit A6) ---------------------------------
 // The single "answered" rule used by the runner's unanswered counts, the
 // navigator, Check-Your-Work, and (inverted) the review "skipped" badge. A
