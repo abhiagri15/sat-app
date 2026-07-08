@@ -1,6 +1,6 @@
 'use client';
 
-import { LETTERS } from '@/app/lib/test';
+import { LETTERS, isAnswered } from '@/app/lib/test';
 import type { ResponseValue } from '@/app/lib/test';
 import type { Question } from '@/app/lib/questions';
 import { isSprCorrect } from '@/app/lib/spr';
@@ -41,10 +41,9 @@ export function ReviewItem({
 }: ReviewItemProps) {
   const isSpr = question.response_format === 'spr';
 
-  // Skipped: null/undefined (any format) or an empty trimmed string (SPR).
-  const skipped =
-    response == null ||
-    (typeof response === 'string' && response.trim() === '');
+  // Skipped is the inverse of the shared isAnswered predicate (null/undefined
+  // any format, or an empty trimmed string for SPR).
+  const skipped = !isAnswered(response ?? null);
 
   let isCorrect = false;
   if (!skipped) {

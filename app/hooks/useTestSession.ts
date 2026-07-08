@@ -5,6 +5,7 @@ import {
   appendModule2,
   buildTest,
   computeResults,
+  isAnswered,
   TIME_MS_CAP,
   type Results,
   type ResponseValue,
@@ -12,7 +13,7 @@ import {
   type TestLength,
 } from '@/app/lib/test';
 import { drawShortTest, drawFullTestModule1, drawModule2 } from '@/app/lib/pool';
-import { SECTION_CONFIG, type SectionKey } from '@/app/lib/questions';
+import { SECTION_CONFIG, DEFAULT_MODULE2_THRESHOLD_PCT, type SectionKey } from '@/app/lib/questions';
 import { isSprCorrect } from '@/app/lib/spr';
 import { toAttemptPayload, type AttemptPayload } from '@/app/lib/persistence/payload';
 import { saveAttempt } from '@/app/lib/persistence/actions';
@@ -150,8 +151,11 @@ export interface TestSession {
   goToQuestion: (qi: number) => void;
   // Replaces submitSection. For short tests this behaves like the old
   // section submit; for full tests it routes Module 1 → Module 2 (with
-  // a lazy pool draw) on first call, then finalises the section.
-  submitModule: () => void;
+  // a lazy pool draw) on first call, then finalises the section. `auto` is
+  // true ONLY for the time-up auto-advance (skips the confirm); the honest
+  // optional-boolean type is load-bearing (audit A3) — a point-free UI callback
+  // must NOT leak a MouseEvent into it, so every caller wraps it.
+  submitModule: (auto?: boolean) => void;
   newTest: () => void;
   results: Results | null;
 }
@@ -201,6 +205,14 @@ export function useTestSession(initialName = ''): TestSession {
   // in-test error overlay's manual Retry can replay it without recomputing the
   // routing decision. Set before the draw; cleared on success.
   const module2ParamsRef = useRef<{ secIdx: number; key: SectionKey; path: 'easier' | 'harder' } | null>(null);
+  // In-flight guard for the ENTIRE Module-1 submit branch (audit A2). Set at the
+  // branch entry BEFORE the `await getModule2ThresholdPct()` hop (which is a race
+  // window a ref inside performModule2Draw alone would miss) and cleared in
+  // finally. Prevents a double-draw from a double-click, a time-up firing
+  // mid-draw, or Strict-Mode double-invoke — a second draw would REPLACE
+  // modules[1] and re-null Module-2 answers. Separate from module2ParamsRef
+  // (which retryModule2 needs kept across a failure).
+  const module1SubmitInFlightRef = useRef(false);
 
   // Mid-test crash recovery (spec §B). The resumable snapshot summary shown on
   // the start screen (found once at mount). The full snapshot is stashed in a
@@ -221,6 +233,37 @@ export function useTestSession(initialName = ''): TestSession {
   // The break countdown runs on its OWN interval, entirely separate from the
   // section countdown (tickRef). It must never mutate remaining[][].
   const breakTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Countdown source-of-truth for zero-detection (audit A4). The `setRemaining`
+  // updater must stay PURE — React Strict Mode double-invokes updaters in dev,
+  // so any side effect (the time-up fire) placed inside would run twice. The
+  // interval callback instead decrements THIS ref (a real, once-per-tick
+  // mutation, never double-invoked) and detects the zero-crossing against it;
+  // `setRemaining` only mirrors the ref for display. The current section+module
+  // is likewise mirrored so the interval reads the live cell without recreating
+  // itself every tick. All three are kept in sync at every remaining[][] write
+  // (start / resume / applyModule2Draw) and every secIdx/modIdx move.
+  const remainingRef = useRef<number[][]>([]);
+  const posRef = useRef<{ sec: number; mod: number }>({ sec: 0, mod: 0 });
+  // Reassigned EVERY render (below) so the interval always calls the LATEST
+  // handleTimeUp — which closes over the CURRENT responses. Without this, the
+  // countdown's closure would route Module 1 → 2 off module-entry (all-null)
+  // responses → always 'easier' (audit A1).
+  const handleTimeUpRef = useRef<() => void>(() => {});
+
+  // Break-countdown zero-detection, same discipline as remainingRef (audit A4):
+  // resumeFromBreak is NOT idempotent (it runs setSecIdx(s => s + 1)), so a
+  // Strict-Mode double-invoked updater would advance twice and skip Math. The
+  // interval decrements this ref and fires the resume exactly once on the
+  // zero-crossing; setBreakRemaining stays a pure mirror. Reassigned each render
+  // (below) so the deferred resume calls the latest closure.
+  const breakRemainingRef = useRef<number>(BREAK_SECONDS);
+  const resumeFromBreakRef = useRef<() => void>(() => {});
+  // Guards resumeFromBreak's non-idempotent secIdx advance against a manual
+  // "Resume early" click racing the auto-fire at zero (both would otherwise run
+  // setSecIdx(s => s + 1) and skip Math). Set false on break entry, true on the
+  // first resume.
+  const breakResumedRef = useRef(false);
 
   // Sub-project #15 per-question timing. `timesMsRef` is a 3-D accumulator
   // parallel to `responses` ([section][module][question]) holding total
@@ -285,21 +328,33 @@ export function useTestSession(initialName = ''): TestSession {
   }, [stopTimer, stopBreakTimer]);
 
   // Drive the countdown whenever we're on the test screen / change section / module.
+  // The zero-detection lives OUTSIDE the setState updater (audit A4): the
+  // interval decrements remainingRef (a once-per-tick mutation, never Strict-Mode
+  // double-invoked), fires time-up exactly once when THAT ref crosses zero, and
+  // uses a PURE updater to mirror the ref into state for display. The fire goes
+  // through handleTimeUpRef so it reads the live responses (audit A1).
   useEffect(() => {
     if (screen !== 'test' || paused) return;
+    posRef.current = { sec: secIdx, mod: modIdx };
     stopTimer();
     tickRef.current = setInterval(() => {
+      const { sec, mod } = posRef.current;
+      const row = remainingRef.current[sec];
+      if (!row) return;
+      const wasPositive = (row[mod] ?? 0) > 0;
+      if (wasPositive) row[mod] -= 1;
+      // Mirror the ref into state (pure — just copies the decremented value).
       setRemaining((prev) => {
         const next = prev.map((arr) => arr.slice());
-        const row = next[secIdx];
-        if (!row) return prev;
-        if ((row[modIdx] ?? 0) > 0) row[modIdx] -= 1;
-        if ((row[modIdx] ?? 0) <= 0) {
-          // Defer the advance to avoid setState mid-render of the parent tree.
-          setTimeout(() => handleTimeUp(), 0);
-        }
+        if (next[sec]) next[sec][mod] = remainingRef.current[sec]?.[mod] ?? 0;
         return next;
       });
+      // Fire only on the tick that brought the cell FROM positive TO zero, so a
+      // module that seeds at 0 (never happens today) and a stopped-but-late tick
+      // can't re-fire. Defer to avoid setState mid-render of the parent tree.
+      if (wasPositive && (row[mod] ?? 0) <= 0) {
+        setTimeout(() => handleTimeUpRef.current(), 0);
+      }
     }, 1000);
     return stopTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -313,15 +368,15 @@ export function useTestSession(initialName = ''): TestSession {
     if (screen !== 'break') return;
     stopBreakTimer();
     breakTickRef.current = setInterval(() => {
-      setBreakRemaining((r) => {
-        if (r <= 1) {
-          // Defer the advance to avoid setState mid-render of the parent tree
-          // (same discipline as handleTimeUp).
-          setTimeout(() => resumeFromBreak(), 0);
-          return 0;
-        }
-        return r - 1;
-      });
+      const wasPositive = breakRemainingRef.current > 0;
+      if (wasPositive) breakRemainingRef.current -= 1;
+      // Pure mirror of the ref for display.
+      setBreakRemaining(breakRemainingRef.current);
+      // Fire the resume exactly once, on the positive→zero crossing. Deferred to
+      // avoid setState mid-render (same discipline as handleTimeUp).
+      if (wasPositive && breakRemainingRef.current <= 0) {
+        setTimeout(() => resumeFromBreakRef.current(), 0);
+      }
     }, 1000);
     return stopBreakTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -562,6 +617,14 @@ export function useTestSession(initialName = ''): TestSession {
     setTestLength(snap.testLength);
     setResponses(snap.responses);
     setRemaining(snap.remaining);
+    // Rehydrate the countdown refs alongside state (audit A4): deep-copy the
+    // remaining matrix so interval decrements don't mutate the snapshot's array,
+    // and seed posRef/breakRemainingRef from the restored position.
+    remainingRef.current = snap.remaining.map((arr) => arr.slice());
+    posRef.current = { sec: snap.secIdx, mod: snap.modIdx };
+    breakRemainingRef.current = snap.breakRemaining;
+    // A restored break has not been resumed yet — arm the single-advance guard.
+    breakResumedRef.current = false;
     setMarked(new Set(snap.marked));
     setModuleReview(false);
     setSecIdx(snap.secIdx);
@@ -657,12 +720,23 @@ export function useTestSession(initialName = ''): TestSession {
   // safe (both funnel through the same state transition). The break was entered
   // *before* advancing secIdx, so we advance it here.
   const resumeFromBreak = useCallback(() => {
+    // Single-advance guard (see breakResumedRef): a manual resume and the auto
+    // resume at zero can both reach here; only the first advances the section.
+    if (breakResumedRef.current) return;
+    breakResumedRef.current = true;
     stopBreakTimer();
     setSecIdx((s) => s + 1);
     setModIdx(0);
     setQIdx(0);
     setScreen('test');
   }, [stopBreakTimer]);
+
+  // Reassign the interval-called refs EVERY render (audit A1/A4). The countdown
+  // and break intervals call through these so they always see the LATEST
+  // closures — handleTimeUp over the current `responses` (so Module-1→2 routing
+  // reads live answers), resumeFromBreak over current state.
+  handleTimeUpRef.current = handleTimeUp;
+  resumeFromBreakRef.current = resumeFromBreak;
 
   const start = async () => {
     const trimmed = name.trim();
@@ -674,6 +748,8 @@ export function useTestSession(initialName = ''): TestSession {
     setStartError(null);
     setModule2Error(null);
     setBreakRemaining(BREAK_SECONDS);
+    breakRemainingRef.current = BREAK_SECONDS;
+    breakResumedRef.current = false;
     setLoading(true);
     let t: Test;
     if (testLength === 'short') {
@@ -724,7 +800,13 @@ export function useTestSession(initialName = ''): TestSession {
       s.modules.map((m) => new Array<number>(m.questions.length).fill(0)),
     );
     activeQuestionRef.current = null;
-    setRemaining(t.sections.map((s) => s.modules.map((m) => m.timeLimit)));
+    const initialRemaining = t.sections.map((s) => s.modules.map((m) => m.timeLimit));
+    setRemaining(initialRemaining);
+    // Keep the countdown source-of-truth ref (and current-cell mirror) in sync
+    // with the state (audit A4). deep-copy so the interval's in-place decrements
+    // never mutate the state array.
+    remainingRef.current = initialRemaining.map((arr) => arr.slice());
+    posRef.current = { sec: 0, mod: 0 };
     setSecIdx(0);
     setModIdx(0);
     setQIdx(0);
@@ -806,16 +888,22 @@ export function useTestSession(initialName = ''): TestSession {
     if (timesMsRef.current[targetSecIdx]) {
       timesMsRef.current[targetSecIdx][1] = new Array<number>(drawnLen).fill(0);
     }
+    // Full Module 2 seeds from official `moduleSeconds`; a cold-start short
+    // module scales proportionally. `secsPerQ` is fractional now, so Math.round
+    // keeps `remaining` integral (mirrors appendModule2).
+    const m2Seconds = drawnLen === cfg.moduleSize
+      ? cfg.moduleSeconds
+      : Math.round(drawnLen * cfg.secsPerQ);
     setRemaining((rem) => {
       const next = rem.map((arr) => arr.slice());
-      // Full Module 2 seeds from official `moduleSeconds`; a cold-start short
-      // module scales proportionally. `secsPerQ` is fractional now, so
-      // Math.round keeps `remaining` integral (mirrors appendModule2).
-      next[targetSecIdx][1] = drawnLen === cfg.moduleSize
-        ? cfg.moduleSeconds
-        : Math.round(drawnLen * cfg.secsPerQ);
+      next[targetSecIdx][1] = m2Seconds;
       return next;
     });
+    // Keep the countdown ref in sync with the new Module-2 cell (audit A4). The
+    // countdown effect re-seeds posRef when modIdx moves to 1.
+    if (remainingRef.current[targetSecIdx]) {
+      remainingRef.current[targetSecIdx][1] = m2Seconds;
+    }
     setModIdx(1);
     setQIdx(0);
   };
@@ -863,16 +951,21 @@ export function useTestSession(initialName = ''): TestSession {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // submitModule replaces the old submitSection. `auto` skips the
-  // confirm prompt — used for the time-up auto-advance.
-  const submitModule = async (auto = false) => {
+  // submitModule replaces the old submitSection. `auto` skips the confirm
+  // prompt — used ONLY for the time-up auto-advance. The check is `auto === true`
+  // (audit A3): the UI callbacks are wrapped point-free, but the explicit
+  // equality means a future event-object leak (a MouseEvent as `auto`) fails
+  // SAFE to "not auto" — the confirm still fires — rather than silently skipping
+  // it. Type is `auto?: boolean` on the TestSession interface for honesty.
+  const submitModule = async (auto?: boolean) => {
     if (!test) return;
+    const isAuto = auto === true;
 
     // Short tests: one module per section. Behave like the old submitSection.
     if (test.length === 'short') {
-      const unanswered = responses[secIdx]?.[0]?.filter((r) => r === null).length ?? 0;
+      const unanswered = responses[secIdx]?.[0]?.filter((r) => !isAnswered(r)).length ?? 0;
       const last = secIdx === test.sections.length - 1;
-      if (!auto) {
+      if (!isAuto) {
         let msg = unanswered > 0
           ? `You have ${unanswered} unanswered question(s) in this section. `
           : '';
@@ -891,42 +984,64 @@ export function useTestSession(initialName = ''): TestSession {
     // Full test branch.
     const sec = test.sections[secIdx];
     if (modIdx === 0) {
-      const unanswered = responses[secIdx]?.[0]?.filter((r) => r === null).length ?? 0;
-      if (!auto) {
+      // Double-draw guards (audit A2): a second run would REPLACE modules[1] and
+      // re-null Module-2 answers. Bail if a draw is already in flight, or if
+      // Module 2 was already appended (modules.length > 1).
+      if (loading || module1SubmitInFlightRef.current) return;
+      if (test.sections[secIdx].modules.length > 1) return;
+      const unanswered = responses[secIdx]?.[0]?.filter((r) => !isAnswered(r)).length ?? 0;
+      if (!isAuto) {
         const msg =
           (unanswered > 0
             ? `You have ${unanswered} unanswered question(s) in this module. `
             : '') + 'Submit Module 1 and continue to Module 2?';
         if (!window.confirm(msg)) return;
       }
-      // Compute Module 1 correct.
-      let correct = 0;
-      sec.modules[0].questions.forEach((q, qi) => {
-        const v = responses[secIdx]?.[0]?.[qi];
-        if (q.response_format === 'spr') {
-          if (
-            typeof v === 'string' &&
-            q.correct_answer &&
-            isSprCorrect(v, q.correct_answer, q.answer_tolerance ?? null)
-          ) {
+      // Mark in-flight BEFORE the threshold network hop — that await is itself a
+      // race window (the Module-1 interval keeps ticking; a double-click can
+      // re-enter). Cleared in finally so retryModule2 works after a failed draw.
+      module1SubmitInFlightRef.current = true;
+      try {
+        // Compute Module 1 correct.
+        let correct = 0;
+        sec.modules[0].questions.forEach((q, qi) => {
+          const v = responses[secIdx]?.[0]?.[qi];
+          if (q.response_format === 'spr') {
+            if (
+              typeof v === 'string' &&
+              q.correct_answer &&
+              isSprCorrect(v, q.correct_answer, q.answer_tolerance ?? null)
+            ) {
+              correct++;
+            }
+          } else if (typeof v === 'number' && v === q.answerIndex) {
             correct++;
           }
-        } else if (typeof v === 'number' && v === q.answerIndex) {
-          correct++;
+        });
+        // Threshold fetch is a network hop (audit A5): on failure fall back to
+        // the client-safe DEFAULT_MODULE2_THRESHOLD_PCT and proceed, rather than
+        // rejecting submitModule unhandled (no overlay, submit silently no-ops).
+        let threshold: number;
+        try {
+          threshold = await getModule2ThresholdPct(sec.key);
+        } catch (e) {
+          console.error('[useTestSession] getModule2ThresholdPct failed; using default', e);
+          threshold = DEFAULT_MODULE2_THRESHOLD_PCT;
         }
-      });
-      const threshold = await getModule2ThresholdPct(sec.key);
-      const moduleSize = SECTION_CONFIG[sec.key].moduleSize;
-      const cutoff = Math.ceil((moduleSize * threshold) / 100);
-      const path: 'easier' | 'harder' = correct >= cutoff ? 'harder' : 'easier';
-      await performModule2Draw(secIdx, sec.key, path);
+        const moduleSize = SECTION_CONFIG[sec.key].moduleSize;
+        const cutoff = Math.ceil((moduleSize * threshold) / 100);
+        const path: 'easier' | 'harder' = correct >= cutoff ? 'harder' : 'easier';
+        await performModule2Draw(secIdx, sec.key, path);
+      } finally {
+        module1SubmitInFlightRef.current = false;
+      }
       return;
     }
 
     // modIdx === 1: Module 2 done.
-    const unanswered = responses[secIdx]?.[1]?.filter((r) => r === null).length ?? 0;
+    const unanswered = responses[secIdx]?.[1]?.filter((r) => !isAnswered(r)).length ?? 0;
     const last = secIdx === test.sections.length - 1;
-    if (!auto) {
+    if (!isAuto) {
       let msg = unanswered > 0
         ? `You have ${unanswered} unanswered question(s) in this module. `
         : '';
@@ -945,6 +1060,8 @@ export function useTestSession(initialName = ''): TestSession {
     // effect). Entering 'break' does NOT advance secIdx.
     stopTimer();
     setBreakRemaining(BREAK_SECONDS);
+    breakRemainingRef.current = BREAK_SECONDS;
+    breakResumedRef.current = false;
     setScreen('break');
   };
 
@@ -962,6 +1079,8 @@ export function useTestSession(initialName = ''): TestSession {
     setPaused(false);
     setBreaksUsed(false);
     setBreakRemaining(BREAK_SECONDS);
+    breakRemainingRef.current = BREAK_SECONDS;
+    breakResumedRef.current = false;
     setStartError(null);
     setModule2Error(null);
     // #16: clear marks + any open review page.

@@ -11,6 +11,13 @@ export async function startTest(
   page: Page,
   length: 'short' | 'full',
 ): Promise<void> {
+  // Accept every window.confirm. Once the submit confirms are LIVE (audit A3),
+  // Playwright's default is to auto-DISMISS dialogs → submitModule early-returns
+  // → the runner specs hang. This one registration covers all four specs that
+  // call startTest; the drill spec has no confirms, and the crash-recovery
+  // Discard path is a plain button (not window.confirm), so accepting all
+  // dialogs breaks nothing.
+  page.on('dialog', (d) => d.accept());
   await page.goto('/');
   await expect(
     page.getByRole('heading', { name: 'SAT Practice Test' }),

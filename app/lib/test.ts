@@ -17,6 +17,16 @@ export const TIME_MS_CAP = 600_000;
 // answers are the entered string (e.g. "3.14" or "1/2"); null = unanswered.
 export type ResponseValue = number | string | null;
 
+// The single "answered" predicate, shared across the runner (submitModule's
+// unanswered counts), the navigator, Check-Your-Work, and the review "skipped"
+// inverse. A response counts as answered when it is non-null AND, for SPR, its
+// trimmed string is non-empty (a cleared grid-in "" is unanswered). mcq index 0
+// counts. Keep every call site on this one predicate — the counts disagreed
+// on cleared SPR entries before it existed (audit A6).
+export function isAnswered(r: ResponseValue): boolean {
+  return r !== null && (typeof r !== 'string' || r.trim() !== '');
+}
+
 // Sub-project #11: a section is now composed of one or more modules.
 // Short tests have a single module per section (length 1). Full tests
 // build Module 1 up-front; Module 2 is appended via `appendModule2`

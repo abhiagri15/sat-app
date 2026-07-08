@@ -427,6 +427,14 @@ export const SECTION_CONFIG = {
 export const SECTION_ORDER = ['rw', 'math'] as const;
 export type SectionKey = (typeof SECTION_ORDER)[number];
 
+// Fallback Module-2 routing threshold (% of Module 1 correct needed for the
+// harder Module 2) when the live sat.app_config read is unavailable. Lives here
+// (client-safe, alongside SECTION_CONFIG) as the single source of truth:
+// server-only app/lib/config.ts imports it, and the 'use client' test hook uses
+// it as its try/catch fallback — importing config.ts into the hook would pull
+// supabase/server into the browser bundle (build break).
+export const DEFAULT_MODULE2_THRESHOLD_PCT = 60;
+
 // Total questions across a section when the test is 'full' (sum of all
 // modules). For 'short', the count is `shortCount` (one module only).
 export function fullSectionCount(s: SectionKey): number {

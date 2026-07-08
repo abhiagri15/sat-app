@@ -1,7 +1,7 @@
 'use client';
 
 import { clsx } from 'clsx';
-import type { TestSection, ResponseValue } from '@/app/lib/test';
+import { isAnswered, type TestSection, type ResponseValue } from '@/app/lib/test';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
 
@@ -41,11 +41,7 @@ export function QuestionNavigator({
         <h2 className="text-base font-semibold mb-3">Question navigator</h2>
         <div className="flex flex-wrap gap-2 my-4">
           {mod.questions.map((_, i) => {
-            const r = sectionResponses[i];
-            // mcq: any number (including 0) means answered. spr: non-empty
-            // string means answered. null / undefined / "" means unanswered.
-            const answered =
-              typeof r === 'number' || (typeof r === 'string' && r.trim() !== '');
+            const answered = isAnswered(sectionResponses[i] ?? null);
             const marked = isMarked(i);
             return (
               <button

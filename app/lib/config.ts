@@ -1,7 +1,10 @@
 import { createClient } from '@/app/lib/supabase/server';
+// Single source of truth (client-safe module) — the 'use client' test hook
+// falls back to the same constant via questions.ts, which never imports this
+// server-only file.
+import { DEFAULT_MODULE2_THRESHOLD_PCT } from '@/app/lib/questions';
 
 const DEFAULT_DAILY_ATTEMPT_LIMIT = 5;
-const DEFAULT_MODULE2_THRESHOLD_PCT = 60;
 // Default minimum count of never-served (globally fresh) questions per
 // (section, skill, difficulty) cell. The question-generator (both the n8n
 // workflow and the Vercel cron) fires whenever any cell drops below this

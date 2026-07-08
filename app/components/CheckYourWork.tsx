@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { clsx } from 'clsx';
-import type { TestSection, ResponseValue } from '@/app/lib/test';
+import { isAnswered, type TestSection, type ResponseValue } from '@/app/lib/test';
 import { Button } from '@/app/components/ui/button';
 
 // Small amber bookmark glyph used for both the legend and the marked-square
@@ -94,9 +94,7 @@ export function CheckYourWork({
           back to that question. */}
       <div className="mt-5 flex flex-wrap gap-2">
         {mod.questions.map((_, i) => {
-          const r = sectionResponses[i];
-          const answered =
-            typeof r === 'number' || (typeof r === 'string' && r.trim() !== '');
+          const answered = isAnswered(sectionResponses[i] ?? null);
           const marked = isMarked(i);
           return (
             <button
@@ -128,7 +126,11 @@ export function CheckYourWork({
         <Button variant="secondary" onClick={onBack}>
           Back to question
         </Button>
-        <Button onClick={onSubmit}>{submitLabel}</Button>
+        {/* Wrap point-free (audit A3): Button's onClick forwards a MouseEvent —
+            a bare onClick={onSubmit} leaks it down to submitModule's `auto`,
+            skipping the confirm. Drop it here too (belt-and-suspenders with the
+            SatPractice-side wrap). */}
+        <Button onClick={() => onSubmit()}>{submitLabel}</Button>
       </div>
     </div>
   );

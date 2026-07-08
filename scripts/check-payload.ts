@@ -1,6 +1,6 @@
 // Scripted check for toAttemptPayload — the project has no test runner (spec D8).
 // Run: pnpm dlx tsx scripts/check-payload.ts
-import { buildTest, computeResults, sectionQuestions } from '../app/lib/test';
+import { buildTest, computeResults, isAnswered, sectionQuestions } from '../app/lib/test';
 import { toAttemptPayload } from '../app/lib/persistence/payload';
 import { attemptPayloadSchema } from '../app/lib/persistence/schema';
 import type { ResponseValue } from '../app/lib/test';
@@ -162,5 +162,15 @@ assert(
   !attemptPayloadSchema.safeParse(overCapPayload).success,
   'timeMs of 600001 (over TIME_MS_CAP) is rejected',
 );
+
+// --- Shared isAnswered predicate (audit A6) ---------------------------------
+// The single "answered" rule used by the runner's unanswered counts, the
+// navigator, Check-Your-Work, and (inverted) the review "skipped" badge. A
+// cleared SPR entry ("" or whitespace) is unanswered; mcq index 0 is answered.
+assert(isAnswered(0) === true, 'isAnswered(0) — mcq index 0 counts as answered');
+assert(isAnswered(null) === false, 'isAnswered(null) — unanswered');
+assert(isAnswered('') === false, 'isAnswered("") — cleared SPR is unanswered');
+assert(isAnswered('   ') === false, 'isAnswered(whitespace) — blank SPR is unanswered');
+assert(isAnswered('3/4') === true, 'isAnswered("3/4") — a typed SPR entry is answered');
 
 console.log('\nALL CHECKS PASSED');

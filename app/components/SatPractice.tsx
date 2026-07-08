@@ -90,7 +90,10 @@ export default function SatPractice({
         onGoToQuestion={s.goToQuestion}
         onPrev={() => s.goToQuestion(Math.max(0, s.qIdx - 1))}
         onNext={() => s.goToQuestion(Math.min(mod.questions.length - 1, s.qIdx + 1))}
-        onSubmitModule={s.submitModule}
+        // Wrap point-free (audit A3): a bare `s.submitModule` would receive the
+        // Button's MouseEvent as `auto` and skip every confirm. The no-arg
+        // wrapper drops it; submitModule's `auto === true` check is the backstop.
+        onSubmitModule={() => s.submitModule()}
         marked={s.marked}
         onToggleMarked={s.toggleMarked}
         moduleReview={s.moduleReview}
