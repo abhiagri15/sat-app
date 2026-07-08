@@ -135,6 +135,23 @@ function HealthCard({ health }: { health: HealthSummary }) {
             )}
           </>
         )}
+        {/* Pool-insert heartbeat: reflects the HOURLY n8n generator too (which
+            writes no generation_runs row), so this answers "is anything
+            replenishing the pool?" even while lastRun shows the daily cron. */}
+        <div className="flex justify-between gap-3">
+          <dt>Last pool insert</dt>
+          {health.lastInsert === null ? (
+            <dd className="font-medium text-slate-500">none recorded</dd>
+          ) : (
+            <dd
+              className="font-medium text-slate-900"
+              title={formatAbsolute(health.lastInsert.at)}
+            >
+              {formatRelative(health.lastInsert.at)} (
+              {health.lastInsert.insertedTodayUtc} today)
+            </dd>
+          )}
+        </div>
       </dl>
     </div>
   );

@@ -280,13 +280,20 @@ export interface HealthSummary {
     flaggedForReview: number | null;
     aiEnabled: boolean | null;
   } | null;
+  // Pool-insert heartbeat. `lastRun` only reflects the daily Vercel cron (the
+  // hourly n8n generator writes questions but no generation_runs row), so the
+  // latest sat.questions insert is the signal that SOME generator is alive —
+  // regardless of which path produced it.
+  lastInsert: { at: string; insertedTodayUtc: number } | null;
 }
 
 export async function getHealthSummary(): Promise<HealthSummary> {
   const admin = createAdminClient();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [failuresRes, runRes] = await Promise.all([
+  const todayUtcStart = new Date().toISOString().slice(0, 10) + 'T00:00:00Z';
+
+  const [failuresRes, runRes, latestInsertRes, todayCountRes] = await Promise.all([
     admin
       .schema('sat')
       .from('save_failures')
@@ -299,6 +306,19 @@ export async function getHealthSummary(): Promise<HealthSummary> {
       .order('started_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
+    admin
+      .schema('sat')
+      .from('questions')
+      .select('created_at')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    // head:true exact count — never tally rows in JS (admin-count-maxrows gotcha).
+    admin
+      .schema('sat')
+      .from('questions')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', todayUtcStart),
   ]);
 
   if (failuresRes.error) {
@@ -306,6 +326,12 @@ export async function getHealthSummary(): Promise<HealthSummary> {
   }
   if (runRes.error) {
     console.error('[getHealthSummary] generation_runs read failed:', runRes.error);
+  }
+  if (latestInsertRes.error) {
+    console.error('[getHealthSummary] latest question read failed:', latestInsertRes.error);
+  }
+  if (todayCountRes.error) {
+    console.error('[getHealthSummary] today insert count failed:', todayCountRes.error);
   }
 
   const row = runRes.error ? null : runRes.data;
@@ -325,9 +351,18 @@ export async function getHealthSummary(): Promise<HealthSummary> {
     };
   }
 
+  const latestInsert = latestInsertRes.error ? null : latestInsertRes.data;
+  const lastInsert = latestInsert
+    ? {
+        at: latestInsert.created_at as string,
+        insertedTodayUtc: todayCountRes.error ? 0 : todayCountRes.count ?? 0,
+      }
+    : null;
+
   return {
     saveFailures7d: failuresRes.error ? 0 : failuresRes.count ?? 0,
     lastRun,
+    lastInsert,
   };
 }
 
