@@ -38,7 +38,25 @@ test('short test: answer, eliminate, mark, check your work, submit, results, das
     await expect(
       page.getByRole('button', { name: /Restore option A/ }),
     ).toBeVisible();
-    // Answer by clicking choice B's letter label.
+
+    // --- Keyboard accessibility (C5): the choices are REAL buttons, so a
+    // keyboard user can focus one and select it with Enter. Choice C's button
+    // is the one containing the letter span "C" (strict-mode-safe: exactly one
+    // choice button contains that span; the eliminator/nav buttons do not).
+    const choiceC = page
+      .getByRole('button')
+      .filter({ has: page.locator('span', { hasText: /^C$/ }) });
+    await choiceC.focus();
+    await expect(choiceC).toBeFocused();
+    await page.keyboard.press('Enter');
+    // Selected state renders as the blue selection ring on the row (the button's
+    // parent). Assert it to prove Enter selected the choice.
+    await expect(
+      choiceC.locator('xpath=..'),
+    ).toHaveClass(/ring-blue-500/);
+
+    // Answer by clicking choice B's letter label (overrides the C selection —
+    // the question still counts as answered either way).
     await page.locator('span', { hasText: /^B$/ }).first().click();
   }
 

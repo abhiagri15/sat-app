@@ -357,21 +357,29 @@ export function QuestionView({
           <div className="flex flex-col gap-2.5">
             {question.choices.map((c, i) => {
               const isEliminated = eliminated?.has(i) ?? false;
+              // Structure (C5): a row DIV holds a real choice <button> (flex-1,
+              // native focus/Enter/Space) and a SIBLING eliminator button — never
+              // a button nested inside a clickable button. The row itself carries
+              // only the visual state classes.
               return (
                 <div
                   key={i}
                   className={clsx(
-                    'flex items-start gap-3 rounded-lg border border-slate-200 px-4 py-3 cursor-pointer transition hover:border-blue-500 hover:bg-blue-50',
+                    'flex items-stretch gap-1 rounded-lg border border-slate-200 transition hover:border-blue-500 hover:bg-blue-50',
                     selected === i && 'border-blue-500 bg-blue-50 ring-1 ring-inset ring-blue-500',
                     isEliminated && 'opacity-40',
                   )}
-                  // Clicking a choice selects it (and clears its elimination —
-                  // see TestScreen's onAnswer wrapper). Eliminated choices stay
-                  // clickable.
-                  onClick={() => onAnswer(i)}
                 >
-                  <span className="font-bold text-blue-600 min-w-[20px]">{LETTERS[i]}</span>
-                  <span className={clsx('flex-1', isEliminated && 'line-through')}>{c}</span>
+                  <button
+                    type="button"
+                    // Selecting a choice clears its elimination — see TestScreen's
+                    // onAnswer wrapper. Eliminated choices stay selectable.
+                    onClick={() => onAnswer(i)}
+                    className="flex flex-1 items-start gap-3 px-4 py-3 text-left"
+                  >
+                    <span className="font-bold text-blue-600 min-w-[20px]">{LETTERS[i]}</span>
+                    <span className={clsx('flex-1', isEliminated && 'line-through')}>{c}</span>
+                  </button>
                   {eliminatorOn && onToggleEliminate && (
                     <button
                       type="button"
@@ -381,12 +389,10 @@ export function QuestionView({
                           ? `Restore option ${LETTERS[i]}`
                           : `Eliminate option ${LETTERS[i]}`
                       }
-                      // Toggle elimination without selecting the choice.
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleEliminate(i);
-                      }}
-                      className="ml-1 min-w-[24px] rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs font-semibold text-slate-500 transition hover:border-slate-500 hover:text-slate-800"
+                      // Toggle elimination without selecting the choice — a sibling
+                      // button, so no nested-button / event-stopPropagation dance.
+                      onClick={() => onToggleEliminate(i)}
+                      className="my-2 mr-2 flex min-h-[40px] min-w-[40px] items-center justify-center rounded border border-slate-300 bg-white text-xs font-semibold text-slate-500 transition hover:border-slate-500 hover:text-slate-800"
                     >
                       {isEliminated ? '↺' : '✕'}
                     </button>
