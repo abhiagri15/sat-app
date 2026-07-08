@@ -10,8 +10,10 @@ pnpm dev              # next dev — http://localhost:3000
 pnpm build            # production build
 pnpm start            # serve the production build
 pnpm lint             # next lint (uses Next.js defaults)
-pnpm type-check       # tsc --noEmit
+pnpm type-check       # next typegen && tsc --noEmit (regenerates .next/types first — see note)
 ```
+
+**`type-check` runs `next typegen` before `tsc` on purpose.** `tsconfig.json` includes `.next/types/**/*.ts` (Next's generated route types), so a bare `tsc --noEmit` fails on a cold clone or after route renames — the stale/missing generated types reference routes that no longer exist. `next typegen` regenerates them without a full build. Do not "simplify" the script back to bare `tsc`.
 
 There is no unit-test runner in this project. The pure modules that warrant checking are
 exercised by scripted assertion files:
@@ -45,7 +47,18 @@ pnpm e2e:headed       # same, with a visible browser
 - **Self-contained run:** `playwright.config.ts` spawns its OWN dev server (`webServer`, reuses an existing one on :3000), runs serial (`workers: 1` — shared account + daily limits).
 - **Dedicated user:** the suite signs in as a dedicated `sat-e2e@example.com` user; `e2e/global-setup.ts` ensures it exists + email-confirmed and saves `storageState`, and setup/teardown run a service-role cleanup **strictly scoped to that user's `user_id`** (five parent tables, children cascade) so reruns never hit the daily attempt cap and never touch other users or the question pool.
 - **E2E is a LOCAL gate, not part of the check-script battery** (no CI exists). It is NOT included in the standard verification battery.
-- **Secret-scan invariant unchanged:** `e2e/` is node-context and holds the ONLY service-role usage OUTSIDE `app/`. The 8-file `app/` service-role invariant (see the AI sub-project gotchas) is unchanged — that scan covers `app/` only, so `e2e/` code is deliberately out of scope.
+- **Secret-scan invariant unchanged:** service-role usage outside `app/` lives ONLY in node-context dev tooling — `e2e/` and `scripts/` (seed + the live smokes). The 8-file `app/` service-role invariant (see the AI sub-project gotchas) is unchanged — that scan covers `app/` only, so `e2e/` and `scripts/` are deliberately out of scope.
+
+### Live smokes (post-migration verification)
+
+```bash
+pnpm dlx tsx scripts/smoke-live-rpcs.ts                        # every user-facing RPC against the LIVE DB
+pnpm dlx tsx --env-file=.env.local scripts/smoke-explain-cache.ts  # explanation cache: AI gen then cross-user cache hit
+```
+
+- **`smoke-live-rpcs.ts` is the repeatable post-migration check** — run it after applying any `sat` migration. It signs in as the dedicated `sat-e2e@example.com` account (created if missing) so authenticated checks exercise the real grant + RLS path, uses the service client for the two service-only reads, and cleans up via the shared e2e cleanup. It calls `draw_questions` and `upsert_study_plan` with the app's exact named-arg shapes — the regression net for the **OVERLOAD RULE / PGRST203** (see the Trust & Coverage gotchas). It deliberately skips `save_attempt`/`save_practice` (Playwright covers them through the UI) and `calibrate_difficulty`/`flag_needs_review` (cron-owned writes that relabel real pool rows).
+- **`smoke-explain-cache.ts` is self-cleaning and time-bounded**: it deletes its synthetic rows (fake question id + two fake user ids) before AND after the run, and races each call against a 120 s timeout so an Ollama Cloud latency spike fails fast with a clear message instead of hanging (a killed run can no longer leave rows behind — earlier versions could).
+- Both are LIVE smokes (they hit the shared dev DB), not part of the check-script battery.
 
 ## Architecture
 
