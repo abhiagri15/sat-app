@@ -2,6 +2,7 @@ import { createClient } from '@/app/lib/supabase/server';
 import { getAnalytics } from '@/app/lib/analytics/queries';
 import { getPracticeSkillStats } from '@/app/lib/practice/queries';
 import { listAttempts } from '@/app/lib/persistence/queries';
+import { weekStartInTz } from './timezone';
 import type { PlannerInputs, MissReasonMixRow } from './compute';
 
 // Planner query layer (#18, Task 7). Assembles the pure-compute `PlannerInputs`
@@ -14,26 +15,15 @@ import type { PlannerInputs, MissReasonMixRow } from './compute';
 // error rather than throw. The build gate is run with the RPCs missing.
 
 // ---------------------------------------------------------------------------
-// ISO week helper
+// "This ISO week" boundary
 // ---------------------------------------------------------------------------
 //
-// "This ISO week" = Monday 00:00 in the SERVER's local time through the query
-// instant. We derive the local Monday-midnight boundary and hand its ISO string
-// to the activity filters. Rationale for LOCAL (not UTC) Monday: the plan is a
-// human weekly cadence ("what to do this week"), and the student experiences the
-// week in their own clock; a UTC boundary would flip the week over at an
-// arbitrary local hour. Compute is timezone-agnostic (it only reads
-// `thisWeek.*` counts we derive here), so the choice lives entirely in this
-// helper — swap to UTC by using getUTC*/setUTC* if the product ever wants it.
-export function isoWeekStart(now: Date = new Date()): Date {
-  const d = new Date(now);
-  d.setHours(0, 0, 0, 0);
-  // getDay(): 0 = Sunday … 6 = Saturday. Days since Monday: Sun → 6, else n-1.
-  const dayOfWeek = d.getDay();
-  const daysSinceMonday = (dayOfWeek + 6) % 7;
-  d.setDate(d.getDate() - daysSinceMonday);
-  return d;
-}
+// Monday 00:00 in the STUDENT's own IANA zone (T2, #19) — replaces the old
+// server-local `isoWeekStart`. Vercel runs UTC, so a server-local (or plain UTC)
+// Monday boundary flips the week over at an arbitrary local hour for a US
+// student; `weekStartInTz` (app/lib/planner/timezone.ts) anchors the boundary to
+// the zone captured on the plan row. Plan-less users keep UTC (their plan
+// doesn't exist yet, so week accuracy is moot). See getPlannerInputs below.
 
 // ---------------------------------------------------------------------------
 // getStudyPlan — the user's own sat.study_plans row (RLS select-own), or null.
@@ -43,6 +33,7 @@ export interface StudyPlanRow {
   targetScore: number;
   testDate: string | null;
   sessionsPerWeek: number;
+  timezone: string | null;
 }
 
 // Reads the signed-in user's plan row via the user client (RLS confines it).
@@ -54,7 +45,7 @@ export async function getStudyPlan(): Promise<StudyPlanRow | null> {
   const { data, error } = await supabase
     .schema('sat')
     .from('study_plans')
-    .select('target_score, test_date, sessions_per_week')
+    .select('target_score, test_date, sessions_per_week, timezone')
     .maybeSingle();
   if (error || !data) {
     if (error) console.error('[planner] getStudyPlan failed:', error.message);
@@ -64,11 +55,15 @@ export async function getStudyPlan(): Promise<StudyPlanRow | null> {
     target_score: number;
     test_date: string | null;
     sessions_per_week: number;
+    timezone: string | null;
   };
   return {
     targetScore: row.target_score,
     testDate: row.test_date,
     sessionsPerWeek: row.sessions_per_week,
+    // `timezone` may be absent on a pre-migration row (select silently omits an
+    // unknown column) — coalesce to null so the week boundary falls back to UTC.
+    timezone: row.timezone ?? null,
   };
 }
 
@@ -160,18 +155,23 @@ async function getThisWeek(weekStartIso: string): Promise<{
 
 export async function getPlannerInputs(): Promise<PlannerInputs> {
   const now = new Date();
-  const weekStart = isoWeekStart(now);
-  const weekStartIso = weekStart.toISOString();
+  const nowIso = now.toISOString();
+
+  // The this-week boundary depends on the plan's captured timezone, so the plan
+  // read must resolve BEFORE getThisWeek's window is known. Fetch it first (a
+  // cheap RLS select), derive the Monday-00:00-in-zone boundary, then fan out the
+  // remaining independent reads. Plan-less users → weekStartInTz(now, null) = UTC.
+  const plan = await getStudyPlan();
+  const weekStartIso = weekStartInTz(nowIso, plan?.timezone ?? null);
 
   // Fan out the independent reads. getAnalytics already reads listAttempts, but
   // we also need the raw attempts (for last-test / last-full-test timestamps and
   // the recent-scores tail), so we fetch attempts here too — cheap RLS select.
-  const [analytics, practiceStats, missReasonMix, plan, thisWeek, attempts] =
+  const [analytics, practiceStats, missReasonMix, thisWeek, attempts] =
     await Promise.all([
       getAnalytics(),
       getPracticeSkillStats(),
       getMissReasonMix(),
-      getStudyPlan(),
       getThisWeek(weekStartIso),
       listAttempts(),
     ]);
@@ -202,6 +202,6 @@ export async function getPlannerInputs(): Promise<PlannerInputs> {
         }
       : null,
     thisWeek,
-    today: now.toISOString(),
+    today: nowIso,
   };
 }

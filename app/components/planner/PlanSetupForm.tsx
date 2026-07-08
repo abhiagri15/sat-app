@@ -40,7 +40,22 @@ export function PlanSetupForm({
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const result = await saveStudyPlan(target, testDate === '' ? null : testDate, sessions);
+      // Silently capture the student's IANA zone (no UI element) so the planner's
+      // "this week" boundary is Monday 00:00 in THEIR clock, not the UTC server's
+      // (#19 T2). Guarded because Intl can be absent/throw in exotic runtimes;
+      // null → the RPC + week helper fall back to UTC.
+      let timezone: string | null = null;
+      try {
+        timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+      } catch {
+        timezone = null;
+      }
+      const result = await saveStudyPlan(
+        target,
+        testDate === '' ? null : testDate,
+        sessions,
+        timezone,
+      );
       if (!result.ok) {
         setError(result.error ?? 'Could not save your plan.');
         return;

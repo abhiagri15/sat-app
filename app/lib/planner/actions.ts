@@ -24,6 +24,11 @@ const saveStudyPlanSchema = z.object({
     )
     .transform((v) => (v === '' ? null : v)),
   sessions: z.number().int().min(2).max(7),
+  // Captured client-side from Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // null when the browser doesn't resolve one. The RPC re-validates the IANA
+  // shape and stores as-is (used only inside Intl.DateTimeFormat, which throws →
+  // UTC fallback in the week helper), so this pass is a lightweight length guard.
+  timezone: z.string().max(64).nullable(),
 });
 
 // Upserts the signed-in user's study plan via the sat.upsert_study_plan
@@ -34,8 +39,9 @@ export async function saveStudyPlan(
   target: number,
   testDate: string | null,
   sessions: number,
+  timezone: string | null,
 ): Promise<SaveStudyPlanResult> {
-  const parsed = saveStudyPlanSchema.safeParse({ target, testDate, sessions });
+  const parsed = saveStudyPlanSchema.safeParse({ target, testDate, sessions, timezone });
   if (!parsed.success) {
     return { ok: false, error: 'Please check the target, date, and sessions.' };
   }
@@ -45,6 +51,7 @@ export async function saveStudyPlan(
     p_target: parsed.data.target,
     p_test_date: parsed.data.testDate,
     p_sessions: parsed.data.sessions,
+    p_timezone: parsed.data.timezone,
   });
   if (error) {
     console.error('[planner] upsert_study_plan failed:', error.message);
