@@ -255,6 +255,82 @@ export async function getReviewQueue(limit = 50): Promise<ReviewQueueRow[]> {
   }));
 }
 
+// Admin Overview health card (design spec §C2 / T4). Two operational signals:
+//   - saveFailures7d: how many attempt/practice saves failed in the last 7 days
+//     (a spike means the save path is broken for real users). Counted via a
+//     head:true exact-count query — NOT a JS row tally (the admin-count-maxrows
+//     gotcha: PostgREST caps returned rows at max-rows, so tallying in JS
+//     silently undercounts; count queries are exact at any size).
+//   - lastRun: the most recent sat.generation_runs row (the daily cron). A row
+//     whose completed_at is null = a killed run (maxDuration hit mid-batch) or
+//     the generator_state throw path — exactly the signal the card surfaces.
+//     summary fields are plucked null-safe (an old/partial row may lack them).
+//
+// Both tables are RLS-on, policy-less, service-role-only (the question_flags /
+// save_failures posture), so this reads via the service-role client. The page
+// route is already requireAdmin()'d. Degrades gracefully on error: log +
+// zeros/null, never throws (matching this file's other reads).
+export interface HealthSummary {
+  saveFailures7d: number;
+  lastRun: {
+    startedAt: string;
+    completedAt: string | null;
+    accepted: number | null;
+    calibrated: number | null;
+    flaggedForReview: number | null;
+    aiEnabled: boolean | null;
+  } | null;
+}
+
+export async function getHealthSummary(): Promise<HealthSummary> {
+  const admin = createAdminClient();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [failuresRes, runRes] = await Promise.all([
+    admin
+      .schema('sat')
+      .from('save_failures')
+      .select('id', { count: 'exact', head: true })
+      .gt('created_at', sevenDaysAgo),
+    admin
+      .schema('sat')
+      .from('generation_runs')
+      .select('started_at, completed_at, summary')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (failuresRes.error) {
+    console.error('[getHealthSummary] save_failures count failed:', failuresRes.error);
+  }
+  if (runRes.error) {
+    console.error('[getHealthSummary] generation_runs read failed:', runRes.error);
+  }
+
+  const row = runRes.error ? null : runRes.data;
+  let lastRun: HealthSummary['lastRun'] = null;
+  if (row) {
+    const summary = (row.summary ?? {}) as Record<string, unknown>;
+    const num = (v: unknown): number | null =>
+      typeof v === 'number' ? v : null;
+    lastRun = {
+      startedAt: row.started_at as string,
+      completedAt: (row.completed_at as string | null) ?? null,
+      accepted: num(summary.accepted),
+      calibrated: num(summary.calibrated),
+      flaggedForReview: num(summary.flaggedForReview),
+      aiEnabled:
+        typeof summary.aiEnabled === 'boolean' ? summary.aiEnabled : null,
+    };
+  }
+
+  return {
+    saveFailures7d: failuresRes.error ? 0 : failuresRes.count ?? 0,
+    lastRun,
+  };
+}
+
 export async function getQuestionItemStats(id: string): Promise<QuestionItemStats> {
   const admin = createAdminClient();
 
