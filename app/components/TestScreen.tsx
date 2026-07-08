@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { clsx } from 'clsx';
 import type { TestSection, ResponseValue } from '@/app/lib/test';
-import { addInterval, removeIntervalAt, type Interval } from '@/app/lib/highlights';
+import { addInterval, removeIntervalAt, setNoteAt, type Interval } from '@/app/lib/highlights';
 import { TopBar } from './TopBar';
 import { QuestionView } from './QuestionView';
 import { QuestionNavigator } from './QuestionNavigator';
@@ -135,6 +135,16 @@ export function TestScreen(props: TestScreenProps) {
     setHighlights((prev) => {
       const next = new Map(prev);
       next.set(question.id, removeIntervalAt(next.get(question.id) ?? [], pos));
+      return next;
+    });
+  }
+
+  // Notes on highlights (spec §C). Sets (or, for an empty string, clears) the
+  // note on the highlight interval containing `pos`. Per-session UI state only.
+  function setHighlightNote(pos: number, note: string) {
+    setHighlights((prev) => {
+      const next = new Map(prev);
+      next.set(question.id, setNoteAt(next.get(question.id) ?? [], pos, note));
       return next;
     });
   }
@@ -324,6 +334,7 @@ export function TestScreen(props: TestScreenProps) {
               highlighterOn={highlighterOn}
               onAddHighlight={addHighlight}
               onRemoveHighlightAt={removeHighlightAt}
+              onSetHighlightNote={setHighlightNote}
               lineReaderOn={lineReaderOn}
               onLineReaderClose={() => setLineReaderOn(false)}
             />

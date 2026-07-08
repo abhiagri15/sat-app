@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { LETTERS } from '@/app/lib/test';
 import type { Question } from '@/app/lib/questions';
@@ -41,6 +41,13 @@ interface QuestionViewProps {
   highlighterOn?: boolean;
   onAddHighlight?: (interval: Interval) => void;
   onRemoveHighlightAt?: (pos: number) => void;
+  // Notes on highlights (sub-project #19, spec §C). With the highlighter ON,
+  // clicking a <mark> opens a small note popover (instead of removing). Save
+  // sets the note via `onSetHighlightNote(pos, note)`; an empty note clears it.
+  // Remove-highlight in the popover calls `onRemoveHighlightAt(pos)`. Both
+  // optional so other callers still compile; when `onSetHighlightNote` is
+  // absent the old click-to-remove behavior is used.
+  onSetHighlightNote?: (pos: number, note: string) => void;
   lineReaderOn?: boolean;
   onLineReaderClose?: () => void;
 }
@@ -61,11 +68,73 @@ export function QuestionView({
   highlighterOn = false,
   onAddHighlight,
   onRemoveHighlightAt,
+  onSetHighlightNote,
   lineReaderOn = false,
   onLineReaderClose,
 }: QuestionViewProps) {
   const isSpr = question.response_format === 'spr';
   const passageRef = useRef<HTMLDivElement | null>(null);
+
+  // Note popover state (spec §C). `notePopover` holds the plain-text start
+  // offset of the clicked mark, the mark's on-screen anchor rect (relative to
+  // the passage container), and the current note text being edited. null = no
+  // popover open. The popover is anchored with a positioned div near the mark.
+  const [notePopover, setNotePopover] = useState<{
+    pos: number;
+    top: number;
+    left: number;
+    draft: string;
+  } | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const notesEnabled = highlighterOn && Boolean(onSetHighlightNote);
+
+  // Any change of question closes an open popover (stale offsets otherwise).
+  useEffect(() => {
+    setNotePopover(null);
+  }, [question.id]);
+
+  // Turning the highlighter off closes the popover (it's a highlighter-on tool).
+  useEffect(() => {
+    if (!highlighterOn) setNotePopover(null);
+  }, [highlighterOn]);
+
+  // Escape closes; outside-click (mousedown outside the popover) closes. Both
+  // only while the popover is open.
+  useEffect(() => {
+    if (!notePopover) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setNotePopover(null);
+    }
+    function onDown(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setNotePopover(null);
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    // `capture` so we see the outside mousedown before it bubbles anywhere.
+    document.addEventListener('mousedown', onDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onDown, true);
+    };
+  }, [notePopover]);
+
+  // Open the note popover for the mark at plain-text offset `pos`, anchored just
+  // below the clicked mark. `markEl` supplies the anchor rect; positions are
+  // computed relative to the passage container so the absolutely-positioned
+  // popover tracks the mark.
+  function openNotePopover(pos: number, note: string, markEl: HTMLElement) {
+    const container = passageRef.current;
+    if (!container) return;
+    const cRect = container.getBoundingClientRect();
+    const mRect = markEl.getBoundingClientRect();
+    setNotePopover({
+      pos,
+      top: mRect.bottom - cRect.top + 4,
+      left: Math.max(0, mRect.left - cRect.left),
+      draft: note,
+    });
+  }
 
   // Convert a DOM selection endpoint (node, offset) into a PLAIN-TEXT character
   // offset relative to the passage container. Existing <mark> spans split the
@@ -168,32 +237,100 @@ export function QuestionView({
                 highlighterOn && 'cursor-text select-text',
               )}
             >
-              {segments.map((seg, i) =>
-                seg.highlighted ? (
+              {segments.map((seg, i) => {
+                if (!seg.highlighted) {
+                  return <span key={i}>{seg.text}</span>;
+                }
+                const start = segmentStart(segments, i);
+                const hasNote = Boolean(seg.note);
+                return (
                   <mark
                     key={i}
                     // Track the plain-text start of this highlighted run so a
-                    // click can remove exactly it. Clicking a <mark> while the
-                    // highlighter is on removes the whole merged interval.
-                    data-hl-start={segmentStart(segments, i)}
+                    // click resolves to exactly its merged interval.
+                    data-hl-start={start}
+                    // Highlighter OFF: a noted mark exposes its note via the
+                    // native `title` tooltip and is otherwise non-interactive.
+                    title={!highlighterOn && hasNote ? seg.note : undefined}
+                    // Highlighter ON: click opens the note popover (spec §C).
+                    // Without a note handler, fall back to click-to-remove.
                     onClick={
-                      highlighterOn && onRemoveHighlightAt
+                      notesEnabled
                         ? (e) => {
                             e.stopPropagation();
-                            onRemoveHighlightAt(segmentStart(segments, i));
+                            openNotePopover(start, seg.note ?? '', e.currentTarget);
                           }
-                        : undefined
+                        : highlighterOn && onRemoveHighlightAt
+                          ? (e) => {
+                              e.stopPropagation();
+                              onRemoveHighlightAt(start);
+                            }
+                          : undefined
                     }
                     className={clsx(
                       'bg-yellow-200 rounded-sm',
                       highlighterOn && 'cursor-pointer',
+                      hasNote && 'underline decoration-dotted decoration-slate-500',
                     )}
                   >
                     {seg.text}
+                    {hasNote && (
+                      <sup aria-hidden="true" className="ml-0.5 text-[0.6em] text-slate-500">
+                        ●
+                      </sup>
+                    )}
                   </mark>
-                ) : (
-                  <span key={i}>{seg.text}</span>
-                ),
+                );
+              })}
+              {notePopover && onSetHighlightNote && (
+                <div
+                  ref={popoverRef}
+                  // Keep the popover from triggering the passage mouseup add-
+                  // highlight handler and from bubbling clicks to the passage.
+                  onMouseUp={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  role="dialog"
+                  aria-label="Highlight note"
+                  className="absolute z-20 w-64 rounded-md border border-slate-300 bg-white p-3 shadow-lg"
+                  style={{ top: notePopover.top, left: notePopover.left }}
+                >
+                  <textarea
+                    autoFocus
+                    maxLength={280}
+                    value={notePopover.draft}
+                    onChange={(e) =>
+                      setNotePopover((p) => (p ? { ...p, draft: e.target.value } : p))
+                    }
+                    placeholder="Add a note…"
+                    className="h-20 w-full resize-none rounded border border-slate-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                  />
+                  <div className="mt-1 text-right text-[11px] text-slate-400">
+                    {notePopover.draft.length}/280
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSetHighlightNote(notePopover.pos, notePopover.draft.trim());
+                        setNotePopover(null);
+                      }}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-blue-700"
+                    >
+                      Save note
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onRemoveHighlightAt?.(notePopover.pos);
+                        setNotePopover(null);
+                      }}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:border-red-400 hover:text-red-600"
+                    >
+                      Remove highlight
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
             {lineReaderOn && (

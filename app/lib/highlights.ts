@@ -11,12 +11,22 @@
 export interface Interval {
   start: number; // inclusive
   end: number; // exclusive
+  // Optional per-highlight note (sub-project #19, spec §C, ≤ 280 chars). UI-
+  // state only, never persisted. When two intervals merge, the merged interval
+  // keeps the FIRST non-empty note (see `mergeIntervals`).
+  note?: string;
 }
 
 // Normalize a list of intervals into a sorted, non-overlapping, non-adjacent
 // canonical form. Overlapping OR touching intervals (end === next.start) are
 // merged into one. Empty/degenerate intervals (start >= end) are dropped.
 // Order in the output is ascending by start.
+//
+// NOTE PRESERVATION (spec §C): a merged interval keeps the FIRST non-empty note
+// in the merge run. "First" is by the canonical sort order (ascending start,
+// then ascending end) — so the earliest-starting interval's note wins, and a
+// later interval's note is only adopted if no earlier one in the run had a
+// non-empty note. Simple + predictable.
 export function mergeIntervals(intervals: Interval[]): Interval[] {
   const valid = intervals
     .filter((iv) => iv.end > iv.start)
@@ -27,11 +37,29 @@ export function mergeIntervals(intervals: Interval[]): Interval[] {
     // `<=` (not `<`) so ADJACENT intervals merge: [2,5) + [5,9) -> [2,9).
     if (last && iv.start <= last.end) {
       if (iv.end > last.end) last.end = iv.end;
+      // Keep the first non-empty note: adopt this interval's note ONLY if the
+      // interval we're merging into doesn't already carry one.
+      if (!last.note && iv.note) last.note = iv.note;
     } else {
-      out.push({ start: iv.start, end: iv.end });
+      out.push({ start: iv.start, end: iv.end, ...(iv.note ? { note: iv.note } : {}) });
     }
   }
   return out;
+}
+
+// Set (or clear) the note on the single (already-merged) interval that contains
+// `pos`. `pos` is a character offset; an interval `[start, end)` contains it
+// when `start <= pos < end`. An empty `note` string CLEARS the note. If no
+// interval contains `pos`, the set is returned unchanged (in canonical form).
+// Because the input is expected to be merged, at most one interval matches.
+export function setNoteAt(intervals: Interval[], pos: number, note: string): Interval[] {
+  const merged = mergeIntervals(intervals);
+  return merged.map((iv) => {
+    if (!(pos >= iv.start && pos < iv.end)) return iv;
+    if (note) return { start: iv.start, end: iv.end, note };
+    // Empty note clears it — drop the `note` key entirely.
+    return { start: iv.start, end: iv.end };
+  });
 }
 
 // Add one interval to a set, clamping it to `[0, textLength]` first, then
@@ -60,10 +88,12 @@ export function removeIntervalAt(intervals: Interval[], pos: number): Interval[]
 }
 
 // A run of passage text plus whether it is highlighted. Concatenating every
-// segment's `text` reconstructs the original `text` exactly (round-trip).
+// segment's `text` reconstructs the original `text` exactly (round-trip). A
+// highlighted segment carries through the source interval's `note` (if any).
 export interface Segment {
   text: string;
   highlighted: boolean;
+  note?: string;
 }
 
 // Split `text` into alternating plain / highlighted segments from the interval
@@ -77,6 +107,7 @@ export function segmentText(text: string, intervals: Interval[]): Segment[] {
       .map((iv) => ({
         start: Math.max(0, Math.min(iv.start, text.length)),
         end: Math.max(0, Math.min(iv.end, text.length)),
+        ...(iv.note ? { note: iv.note } : {}),
       }))
       .filter((iv) => iv.end > iv.start),
   );
@@ -87,7 +118,11 @@ export function segmentText(text: string, intervals: Interval[]): Segment[] {
     if (iv.start > cursor) {
       out.push({ text: text.slice(cursor, iv.start), highlighted: false });
     }
-    out.push({ text: text.slice(iv.start, iv.end), highlighted: true });
+    out.push({
+      text: text.slice(iv.start, iv.end),
+      highlighted: true,
+      ...(iv.note ? { note: iv.note } : {}),
+    });
     cursor = iv.end;
   }
   if (cursor < text.length) {
