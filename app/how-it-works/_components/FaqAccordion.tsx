@@ -14,7 +14,7 @@ const FAQS = [
   },
   {
     q: 'How is this different from official Bluebook practice?',
-    a: 'We mirror the structure of the real Digital SAT (modules, timing, skill mix) but not the look. Our practice is free, unlimited, and the question pool refreshes hourly.',
+    a: 'We mirror the structure of the real Digital SAT (modules, timing, skill mix) but not the look. It’s free: practice drills are unlimited, scored tests are capped at a few per day (so score estimates stay an honest measure, not a grind), and the question pool refreshes hourly.',
   },
   {
     q: 'Will I get the same question twice?',
