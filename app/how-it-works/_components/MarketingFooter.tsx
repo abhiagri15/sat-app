@@ -13,6 +13,8 @@ export function MarketingFooter() {
           <span>&copy; 2026 SAT Practice</span>
           <div className="flex items-center gap-4">
             <a href="#top" className="hover:text-slate-700">Back to top</a>
+            <Link href="/privacy" className="hover:text-slate-700">Privacy</Link>
+            <Link href="/terms" className="hover:text-slate-700">Terms</Link>
             <Link href="/login" className="hover:text-slate-700">Sign in</Link>
           </div>
         </div>

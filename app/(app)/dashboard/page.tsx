@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { getOrCreateProfile } from '@/app/lib/auth/profile';
 import { listAttempts } from '@/app/lib/persistence/queries';
 import { AttemptCard } from '@/app/components/AttemptCard';
+import { AccountSection } from '@/app/components/account/AccountSection';
 
 export default async function DashboardPage() {
   const profile = await getOrCreateProfile();
@@ -29,6 +30,8 @@ export default async function DashboardPage() {
           ))}
         </div>
       )}
+
+      <AccountSection />
     </main>
   );
 }
