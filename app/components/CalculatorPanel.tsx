@@ -8,13 +8,19 @@ import { useState } from 'react';
 // Scientific — the lighter tool that handles ~95% of Math-section
 // computation). The mode swaps the iframe src between the two Desmos embeds:
 //   scientific → https://www.desmos.com/scientific?embed
-//   graphing   → https://www.desmos.com/calculator?embed
+//   graphing   → https://www.desmos.com/testing/cb-digital-sat/graphing
+// Graphing MUST use the College Board testing build. The plain
+// desmos.com/calculator?embed page renders ONLY bare graph paper at this
+// panel width — no expression bar, nothing to type into (the 2026-07-09
+// "graphing calc doesn't work" student report). The cb-digital-sat build is
+// the actual Bluebook test-day calculator, frames cleanly, and stacks
+// graph-over-expressions at 420px.
 
 type CalcMode = 'scientific' | 'graphing';
 
 const CALC_SRC: Record<CalcMode, string> = {
   scientific: 'https://www.desmos.com/scientific?embed',
-  graphing: 'https://www.desmos.com/calculator?embed',
+  graphing: 'https://www.desmos.com/testing/cb-digital-sat/graphing',
 };
 
 interface Props {
