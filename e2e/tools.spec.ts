@@ -109,3 +109,62 @@ test('tools: highlighter mark + note popover, and line reader band with Escape',
   ).toBeHidden();
   await expect(page.getByTestId('line-reader')).toBeHidden();
 });
+
+// Touch path (sub-project #21, spec C6): tap-to-show read-only note when the
+// highlighter is OFF. Runs in a touch-enabled context. The noted mark is
+// created via the MOUSE path first (allowed — Playwright cannot faithfully
+// emulate a long-press touch selection; the touch behavior under test is the
+// TAP-to-show, not the synthetic selection). Then, tool OFF, we `tap()` the
+// noted mark and assert the read-only note popover shows, and a tap outside
+// dismisses it.
+test.describe('touch', () => {
+  test.use({ hasTouch: true });
+
+  test('tools (touch): tap a noted mark shows the read-only note; tap outside dismisses', async ({
+    page,
+  }) => {
+    await startTest(page, 'short');
+
+    const hasPassage = await gotoPassageQuestion(page);
+    test.skip(
+      !hasPassage,
+      'No R&W passage question in this short-test draw (pool variance).',
+    );
+
+    // Create a noted highlight via the mouse path (allowed for setup).
+    await page.getByRole('button', { name: /Highlighter/ }).click();
+    await expect(
+      page.getByRole('button', { name: /Highlighter on/ }),
+    ).toBeVisible();
+    await selectPassageText(page);
+
+    const mark = passageLocator(page).locator('mark').first();
+    await expect(mark).toBeVisible({ timeout: 10_000 });
+    await mark.click();
+    const editPopover = page.getByRole('dialog', { name: 'Highlight note' });
+    await expect(editPopover).toBeVisible();
+    await editPopover.locator('textarea').fill('touch note here');
+    await editPopover.getByRole('button', { name: 'Save note' }).click();
+    await expect(editPopover).toBeHidden();
+
+    // Turn the highlighter OFF — now the mark is the read-only-note tap target.
+    await page.getByRole('button', { name: /Highlighter on/ }).click();
+    await expect(
+      page.getByRole('button', { name: /Highlighter/ }),
+    ).toBeVisible();
+
+    // Tap the noted mark → the read-only note popover shows its text.
+    const notedMark = passageLocator(page)
+      .locator('mark.decoration-dotted')
+      .first();
+    await notedMark.tap();
+    const readPopover = page.getByRole('dialog', { name: 'Highlight note' });
+    await expect(readPopover).toBeVisible();
+    await expect(readPopover).toContainText('touch note here');
+
+    // Tap outside → the popover dismisses. The question prompt (a non-
+    // interactive heading below the passage) is a stable outside-tap target.
+    await page.locator('div.text-lg.font-semibold').first().tap();
+    await expect(readPopover).toBeHidden();
+  });
+});

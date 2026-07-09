@@ -88,6 +88,18 @@ export function QuestionView({
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const notesEnabled = highlighterOn && Boolean(onSetHighlightNote);
 
+  // Read-only note popover (sub-project #21, spec C6). When the highlighter is
+  // OFF, tapping a NOTED mark shows its note anchored below the mark — the
+  // touch-visible replacement for the mouse-only `title` tooltip. `pos` doubles
+  // as the toggle key: tapping the same noted mark again closes it. null = none.
+  const [readNote, setReadNote] = useState<{
+    pos: number;
+    top: number;
+    left: number;
+    note: string;
+  } | null>(null);
+  const readNoteRef = useRef<HTMLDivElement | null>(null);
+
   // Any change of question closes an open popover (stale offsets otherwise).
   useEffect(() => {
     setNotePopover(null);
@@ -97,6 +109,36 @@ export function QuestionView({
   useEffect(() => {
     if (!highlighterOn) setNotePopover(null);
   }, [highlighterOn]);
+
+  // The read-only note popover is a highlighter-OFF tool; turning the tool ON
+  // (edit popover takes over) or changing the question closes it.
+  useEffect(() => {
+    if (highlighterOn) setReadNote(null);
+  }, [highlighterOn]);
+  useEffect(() => {
+    setReadNote(null);
+  }, [question.id]);
+
+  // Read-only note popover dismissal: Escape or an outside tap/click. Uses
+  // pointerdown (capture) so touch AND mouse both dismiss before the event
+  // reaches the passage. Only while the popover is open.
+  useEffect(() => {
+    if (!readNote) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setReadNote(null);
+    }
+    function onDown(e: Event) {
+      if (readNoteRef.current && !readNoteRef.current.contains(e.target as Node)) {
+        setReadNote(null);
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [readNote]);
 
   // Escape closes; outside-click (mousedown outside the popover) closes. Both
   // only while the popover is open.
@@ -133,6 +175,26 @@ export function QuestionView({
       top: mRect.bottom - cRect.top + 4,
       left: Math.max(0, mRect.left - cRect.left),
       draft: note,
+    });
+  }
+
+  // Toggle the read-only note popover for a noted mark (highlighter OFF path).
+  // Same anchoring math as `openNotePopover`; tapping the same mark (same `pos`)
+  // again closes it.
+  function toggleReadNote(pos: number, note: string, markEl: HTMLElement) {
+    const container = passageRef.current;
+    if (!container) return;
+    if (readNote && readNote.pos === pos) {
+      setReadNote(null);
+      return;
+    }
+    const cRect = container.getBoundingClientRect();
+    const mRect = markEl.getBoundingClientRect();
+    setReadNote({
+      pos,
+      top: mRect.bottom - cRect.top + 4,
+      left: Math.max(0, mRect.left - cRect.left),
+      note,
     });
   }
 
@@ -183,19 +245,19 @@ export function QuestionView({
     return acc;
   }
 
-  // On mouseup with the highlighter on: read the selection, convert its
-  // endpoints to plain-text offsets, clamp to the passage, and emit an
-  // interval. Collapsed selections are ignored. The selection is cleared after.
-  function handlePassageMouseUp() {
-    if (!highlighterOn || !onAddHighlight) return;
-    const container = passageRef.current;
-    if (!container) return;
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+  // Convert the CURRENT document selection into a clamped plain-text interval
+  // scoped to the passage container, or null. Single source of the
+  // selection→offset accumulation (mouseup AND the touch selectionchange path
+  // both call this — the text-node-walk lives ONLY in `offsetOf`). A collapsed
+  // or non-passage-touching selection yields null; a range that only clips the
+  // passage is clamped to its bounds. Does NOT clear the selection — callers
+  // that commit clear it (so the debounced path no-ops on the cleared range).
+  function selectionToInterval(container: HTMLElement, sel: Selection): Interval | null {
+    if (sel.rangeCount === 0 || sel.isCollapsed) return null;
     const range = sel.getRangeAt(0);
     // Ignore selections that don't touch the passage at all.
     if (!container.contains(range.startContainer) && !container.contains(range.endContainer)) {
-      return;
+      return null;
     }
     const startNode = container.contains(range.startContainer) ? range.startContainer : container;
     const startOff = container.contains(range.startContainer) ? range.startOffset : 0;
@@ -205,14 +267,65 @@ export function QuestionView({
 
     let a = offsetOf(container, startNode, startOff);
     let b = offsetOf(container, endNode, endOff);
-    if (a == null || b == null) return;
+    if (a == null || b == null) return null;
     if (a > b) [a, b] = [b, a];
     // Clamp to the passage text range; addInterval also clamps, belt-and-braces.
     a = Math.max(0, Math.min(a, total));
     b = Math.max(0, Math.min(b, total));
-    if (b > a) onAddHighlight({ start: a, end: b });
-    sel.removeAllRanges();
+    if (b <= a) return null;
+    return { start: a, end: b };
   }
+
+  // On mouseup with the highlighter on: commit the current selection as a
+  // highlight, then clear the selection. Clearing is load-bearing — the
+  // debounced selectionchange path (touch) reads the SAME live selection, so a
+  // committed-then-cleared range makes that path no-op instead of double-adding.
+  function handlePassageMouseUp() {
+    if (!highlighterOn || !onAddHighlight) return;
+    const container = passageRef.current;
+    if (!container) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    const interval = selectionToInterval(container, sel);
+    if (interval) {
+      onAddHighlight(interval);
+      sel.removeAllRanges();
+    }
+  }
+
+  // Touch-capable highlight capture (sub-project #21, spec C6). Long-press
+  // selection on touch reliably fires `selectionchange` but not a mouseup while
+  // a range is live, so mouseup alone leaves the iPad highlighter dead. This
+  // ADDITIVE path debounces selectionchange (~300ms, so it fires once the drag
+  // settles), commits the range, and clears the selection. Guards against a
+  // double-add with the mouseup path: committing clears the selection, and the
+  // debounce no-ops on a collapsed/cleared/non-passage selection (both paths
+  // read the same live selection, so whichever commits first empties it). The
+  // listener is attached ONLY while `highlighterOn && passage present`.
+  useEffect(() => {
+    if (!highlighterOn || !onAddHighlight || !question.passage) return;
+    const container = passageRef.current;
+    if (!container) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    function onSelectionChange() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        const sel = window.getSelection();
+        if (!sel) return;
+        const interval = selectionToInterval(container!, sel);
+        if (!interval) return;
+        onAddHighlight!(interval);
+        sel.removeAllRanges();
+      }, 300);
+    }
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => {
+      document.removeEventListener('selectionchange', onSelectionChange);
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlighterOn, onAddHighlight, question.passage, question.id]);
 
   // Segment the passage plain text into plain / highlighted runs. Rendered as
   // React-escaped spans — NEVER dangerouslySetInnerHTML.
@@ -252,8 +365,11 @@ export function QuestionView({
                     // Highlighter OFF: a noted mark exposes its note via the
                     // native `title` tooltip and is otherwise non-interactive.
                     title={!highlighterOn && hasNote ? seg.note : undefined}
-                    // Highlighter ON: click opens the note popover (spec §C).
-                    // Without a note handler, fall back to click-to-remove.
+                    // Highlighter ON: click opens the edit note popover (spec
+                    // §C); without a note handler, fall back to click-to-remove.
+                    // Highlighter OFF: tapping a NOTED mark toggles a read-only
+                    // note popover (spec C6 — the touch-visible replacement for
+                    // the hover-only `title`). A non-noted mark stays inert.
                     onClick={
                       notesEnabled
                         ? (e) => {
@@ -265,11 +381,16 @@ export function QuestionView({
                               e.stopPropagation();
                               onRemoveHighlightAt(start);
                             }
-                          : undefined
+                          : !highlighterOn && hasNote
+                            ? (e) => {
+                                e.stopPropagation();
+                                toggleReadNote(start, seg.note ?? '', e.currentTarget);
+                              }
+                            : undefined
                     }
                     className={clsx(
                       'bg-yellow-200 rounded-sm',
-                      highlighterOn && 'cursor-pointer',
+                      (highlighterOn || (!highlighterOn && hasNote)) && 'cursor-pointer',
                       hasNote && 'underline decoration-dotted decoration-slate-500',
                     )}
                   >
@@ -330,6 +451,24 @@ export function QuestionView({
                       Remove highlight
                     </button>
                   </div>
+                </div>
+              )}
+              {/* Read-only note popover (spec C6): touch-visible note when the
+                  highlighter is OFF. Same anchoring + shell as the edit popover,
+                  no textarea/buttons — display only. Dismissed by outside tap,
+                  Escape, or tapping the mark again (see the effect + toggle). */}
+              {readNote && (
+                <div
+                  ref={readNoteRef}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  role="dialog"
+                  aria-label="Highlight note"
+                  className="absolute z-20 w-64 rounded-md border border-slate-300 bg-white p-3 shadow-lg"
+                  style={{ top: readNote.top, left: readNote.left }}
+                >
+                  <p className="whitespace-pre-wrap break-words text-sm text-slate-700">
+                    {readNote.note}
+                  </p>
                 </div>
               )}
             </div>
