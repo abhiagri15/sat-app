@@ -57,3 +57,23 @@ export function requireEnv(): { url: string; serviceKey: string } {
   }
   return { url, serviceKey };
 }
+
+// Guardrail (sub-project #21 discipline): the PLAYWRIGHT suite runs against
+// the LOCAL Supabase stack ONLY — its setup creates/deletes the test user and
+// runs service-role cleanup, so if .env.local ever points at a cloud project
+// (e.g. prod creds pasted in during an incident) it must refuse loudly rather
+// than mutate it. Called from the Playwright global-setup/teardown — NOT from
+// requireEnv(), because the live smokes (scripts/smoke-live-rpcs.ts,
+// smoke-lying-save.ts) share requireEnv and are DELIBERATELY pointed at prod
+// via --env-file=.env.operator-prod. Override with E2E_ALLOW_REMOTE_SUPABASE=1
+// only when deliberately targeting a disposable remote stack.
+export function assertLocalSupabase(url: string): void {
+  const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(url);
+  if (!isLocal && process.env.E2E_ALLOW_REMOTE_SUPABASE !== '1') {
+    throw new Error(
+      `E2E refuses to run against a non-local Supabase URL (${url}). ` +
+        'Point .env.local at the local stack (npx supabase start), or set ' +
+        'E2E_ALLOW_REMOTE_SUPABASE=1 to override deliberately.',
+    );
+  }
+}

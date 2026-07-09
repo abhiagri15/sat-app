@@ -12,12 +12,19 @@ import { requireEnv, E2E_EMAIL } from './env';
 //   study_plans      (leaf)
 //   served_questions (leaf — reset so drills draw fresh)
 //   coach_explains   (leaf)
+//   skill_guidance   (leaf — per-user coaching)
+//   practice_topups  (leaf — the top-up cooldown trail; leftover rows from a
+//                     prior run can wedge the top-up path against its rate cap)
+//   save_failures    (leaf — diagnostics; user_id-scoped rows only)
 const USER_SCOPED_TABLES = [
   'test_attempts',
   'practice_sessions',
   'study_plans',
   'served_questions',
   'coach_explains',
+  'skill_guidance',
+  'practice_topups',
+  'save_failures',
 ] as const;
 
 export function adminClient(): SupabaseClient {

@@ -1,7 +1,12 @@
 import { chromium, type FullConfig } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { loadEnvLocal, E2E_EMAIL, e2ePassword } from './support/env';
+import {
+  loadEnvLocal,
+  assertLocalSupabase,
+  E2E_EMAIL,
+  e2ePassword,
+} from './support/env';
 import { adminClient, findTestUserId, cleanupUserData } from './support/cleanup';
 
 const STORAGE_STATE = resolve(process.cwd(), 'e2e/.auth/user.json');
@@ -32,6 +37,11 @@ async function ensureTestUser(): Promise<string> {
 
 export default async function globalSetup(config: FullConfig) {
   loadEnvLocal();
+
+  // Refuse to run the suite against a non-local Supabase URL (the setup
+  // below creates users and deletes rows via the service role). The live
+  // smokes share support/env but not this gate — see assertLocalSupabase.
+  assertLocalSupabase(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '');
 
   const userId = await ensureTestUser();
 
