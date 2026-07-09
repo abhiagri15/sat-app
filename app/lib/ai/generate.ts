@@ -83,7 +83,8 @@ export interface GenerationSummary {
   flaggedForReview: number;
   // Audit C4 (kill switch): false when sat.app_config.ai_enabled is off. When
   // false, calibration + flagging (free SQL) and the run-ledger row still run,
-  // but no Ollama generation happens. Defaults true (fail-open).
+  // but no Ollama generation happens. The read FAILS CLOSED — a config-read
+  // error also reports false (see app/lib/ai/kill-switch.ts).
   aiEnabled: boolean;
 }
 

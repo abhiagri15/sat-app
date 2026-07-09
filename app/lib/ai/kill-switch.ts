@@ -15,9 +15,21 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 // Is AI generation enabled app-wide? Reads sat.app_config.ai_enabled (single
-// row, id = 1). FAIL-OPEN: a null row, a missing column, or a read error all
-// return true — an observability read must never brick generation. Only an
-// explicit `false` disables AI.
+// row, id = 1). FAIL-CLOSED: a read error, a thrown exception, or a missing
+// row all return false — this is a SPEND/emergency stop, and an emergency
+// stop that silently reverts to "on" when its own config read breaks is not a
+// stop at all (the read is most likely to fail exactly when things are
+// broken). A successful read enables unless the value is an explicit `false`
+// (the column is `not null default true`, so null only appears pre-migration
+// — treat it as enabled).
+//
+// The cost of failing closed is bounded and graceful: every caller already
+// has a no-AI degraded path (static lesson, cooled_down, healthy-skip,
+// `failed`, or an aiEnabled:false run summary), and if app_config is
+// unreadable the subsequent service-role INSERTs would likely fail anyway —
+// the Ollama spend would buy nothing. (This flips the original audit-C4
+// fail-open decision, which optimized for generation availability over stop
+// reliability.)
 //
 // The `admin` argument is the caller's service-role client (SupabaseClient).
 // It is typed structurally so this module does not import the admin factory.
@@ -30,14 +42,14 @@ export async function aiIsEnabled(admin: SupabaseClient): Promise<boolean> {
       .eq('id', 1)
       .maybeSingle();
     if (error || !data) {
-      console.error('[kill-switch] aiIsEnabled read failed (fail-open):', error);
-      return true;
+      console.error('[kill-switch] aiIsEnabled read failed (FAIL-CLOSED — AI disabled this call):', error);
+      return false;
     }
     const value = (data as { ai_enabled: boolean | null }).ai_enabled;
-    // Only an explicit false disables AI; null/undefined fail open.
+    // Explicit false disables; true (or a pre-migration null) enables.
     return value !== false;
   } catch (e) {
-    console.error('[kill-switch] aiIsEnabled unexpected error (fail-open):', e);
-    return true;
+    console.error('[kill-switch] aiIsEnabled unexpected error (FAIL-CLOSED — AI disabled this call):', e);
+    return false;
   }
 }

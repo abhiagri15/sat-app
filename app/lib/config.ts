@@ -29,9 +29,10 @@ export async function getDailyAttemptLimit(): Promise<number> {
 }
 
 // The app-wide AI kill switch (sat.app_config.ai_enabled). Read for the admin
-// settings toggle's default state. FAIL-OPEN: an unreadable/null value returns
-// true (matches aiIsEnabled in app/lib/ai/kill-switch.ts — an observability
-// read must never appear "disabled" by accident).
+// settings toggle's default state ONLY — this is a display read, so an
+// unreadable value defaults to true (the column default) for rendering.
+// NOTE: the actual spend gate, aiIsEnabled in app/lib/ai/kill-switch.ts,
+// deliberately FAILS CLOSED instead — do not "align" it with this read.
 export async function getAiEnabled(): Promise<boolean> {
   const supabase = await createClient();
   const { data, error } = await supabase
