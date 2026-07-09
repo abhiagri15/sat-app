@@ -58,7 +58,15 @@ pnpm dlx tsx --env-file=.env.local scripts/smoke-explain-cache.ts  # explanation
 
 - **`smoke-live-rpcs.ts` is the repeatable post-migration check** — run it after applying any `sat` migration. It signs in as the dedicated `sat-e2e@example.com` account (created if missing) so authenticated checks exercise the real grant + RLS path, uses the service client for the two service-only reads, and cleans up via the shared e2e cleanup. It calls `draw_questions` and `upsert_study_plan` with the app's exact named-arg shapes — the regression net for the **OVERLOAD RULE / PGRST203** (see the Trust & Coverage gotchas). It deliberately skips `save_attempt`/`save_practice` (Playwright covers them through the UI) and `calibrate_difficulty`/`flag_needs_review` (cron-owned writes that relabel real pool rows).
 - **`smoke-explain-cache.ts` is self-cleaning and time-bounded**: it deletes its synthetic rows (fake question id + two fake user ids) before AND after the run, and races each call against a 120 s timeout so an Ollama Cloud latency spike fails fast with a clear message instead of hanging (a killed run can no longer leave rows behind — earlier versions could).
-- Both are LIVE smokes (they hit the shared dev DB), not part of the check-script battery.
+- Both are LIVE smokes (run them against PROD deliberately via `--env-file=.env.operator-prod` after a prod migration), not part of the check-script battery.
+
+### Environments (sub-project #21 — prod/dev separation)
+
+- **Local dev, E2E, and smokes all run against a LOCAL Supabase stack** (`npx supabase start`; config in `supabase/config.toml` — note `schemas` includes `sat`). `.env.local` holds the well-known shared local-dev keys (NOT secrets — they only work against 127.0.0.1). `npx supabase db reset` replays every migration in `supabase/migrations/` plus `supabase/seed.sql` (a balanced ~250-question slice of the prod pool, regenerable with `pnpm dlx tsx --env-file=.env.operator-prod scripts/export-seed.ts`). The stack is DISPOSABLE — reset freely.
+- **Prod credentials live ONLY in `.env.operator-prod`** (gitignored; a name Next.js never auto-loads). Use it deliberately and explicitly (`--env-file=.env.operator-prod`) for operator tasks: the post-prod-migration `smoke-live-rpcs.ts` gate, seed exports. NEVER point default tooling at it; NEVER commit it. Vercel's env vars are the only other place prod keys exist.
+- **Migration discipline is now load-bearing twice over**: local/CI databases are built purely from `supabase/migrations/` — a change applied to prod via MCP without a matching migration file is SCHEMA DRIFT and will break the next `db reset`/CI run (this happened: three `app_config` columns lived only in prod until `20260709000000_sat_config_drift.sql` captured them). Always write the migration file AND apply the same SQL to prod.
+- **CI (`.github/workflows/ci.yml`)**: `checks` job = type-check, lint, the full check-script battery; `e2e` job = boots the same local stack, applies migrations+seed, production build, then the full Playwright suite. Zero cloud secrets in GitHub — CI uses the shared local-dev defaults.
+- Stale-server gotcha applies doubly now: a dev server started before an env swap holds the OLD env in memory — kill anything on :3000 before E2E if `.env.local` changed.
 
 ## Architecture
 

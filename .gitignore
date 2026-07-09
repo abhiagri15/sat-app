@@ -47,3 +47,6 @@ next-env.d.ts
 supabase/.temp/
 
 .vercel
+
+# operator-only prod credentials (never auto-loaded by Next)
+.env.operator-prod
