@@ -72,20 +72,28 @@ function formatRelative(iso: string): string {
 // cleanly. Attention styling turns on when save failures are present or the
 // last run did not complete (a null completed_at = a killed/thrown run).
 function HealthCard({ health }: { health: HealthSummary }) {
-  const { saveFailures7d, lastRun } = health;
+  const { saveFailures7d, lastRun, pool } = health;
   const hasFailures = saveFailures7d > 0;
   const didNotComplete = lastRun !== null && lastRun.completedAt === null;
+  // Inventory warning: any skill below the never-served floor for the
+  // worst-off student — scored-test assembly is at risk if generation
+  // pauses. Amber, not red: the generators are already gating on it.
+  const poolThin = (pool?.thinSkills.length ?? 0) > 0;
   const attention = hasFailures || didNotComplete;
 
   return (
     <div
       className={`block rounded-lg border p-5 ${
-        attention ? 'border-red-300 bg-red-50' : 'border-slate-200'
+        attention
+          ? 'border-red-300 bg-red-50'
+          : poolThin
+            ? 'border-amber-300 bg-amber-50'
+            : 'border-slate-200'
       }`}
     >
       <h2 className="text-lg font-semibold text-slate-900">Health</h2>
       <p className="mt-0.5 text-xs text-slate-500">
-        Save failures and the last generation run.
+        Save failures, generation runs, and pool inventory.
       </p>
       <dl className="mt-3 space-y-1 text-sm text-slate-600">
         <div className="flex justify-between gap-3">
@@ -152,6 +160,41 @@ function HealthCard({ health }: { health: HealthSummary }) {
             </dd>
           )}
         </div>
+        {/* Pool inventory: the generators' own gate signals, surfaced. The
+            buffer row is informational (below-target is what MAKES the
+            generators run); skills below the floor are the amber warning. */}
+        {pool !== null && (
+          <>
+            <div className="flex justify-between gap-3">
+              <dt>Pool buffer (worst student)</dt>
+              <dd className="font-medium text-slate-900">
+                {pool.minActiveUserUnseen === null
+                  ? 'no active students'
+                  : `${pool.minActiveUserUnseen} unseen / target ${pool.bufferTarget}`}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt>Skills below floor ({pool.neverServedFloor})</dt>
+              <dd
+                className={`text-right font-medium ${
+                  poolThin ? 'text-amber-700' : 'text-slate-900'
+                }`}
+              >
+                {pool.thinSkills.length}
+                {poolThin && (
+                  <span className="block text-xs font-normal">
+                    {pool.thinSkills
+                      .slice(0, 4)
+                      .map((t) => `${t.skill} (${t.section}: ${t.worst})`)
+                      .join(' · ')}
+                    {pool.thinSkills.length > 4 &&
+                      ` · +${pool.thinSkills.length - 4} more`}
+                  </span>
+                )}
+              </dd>
+            </div>
+          </>
+        )}
       </dl>
     </div>
   );

@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/app/lib/supabase/admin';
 import { createClient } from '@/app/lib/supabase/server';
+import { SKILLS } from '@/app/lib/questions';
 
 export interface AdminQuestion {
   id: string;
@@ -285,6 +286,20 @@ export interface HealthSummary {
   // latest sat.questions insert is the signal that SOME generator is alive —
   // regardless of which path produced it.
   lastInsert: { at: string; insertedTodayUtc: number } | null;
+  // Pool inventory, from the same sat.generator_state() snapshot the two
+  // generators gate on. `thinSkills` lists the skills where the WORST-OFF
+  // active student's unseen-enabled-question count is below the never-served
+  // floor (the exact predicate of the generator's floor gate), thinnest
+  // first — the early-warning that scored-test assembly is at risk if
+  // generation pauses. minActiveUserUnseen null = no active students yet
+  // (thinSkills is forced empty then: every skill would read 0 and the list
+  // would be all noise). Null on RPC error (graceful, like the other reads).
+  pool: {
+    minActiveUserUnseen: number | null;
+    bufferTarget: number;
+    neverServedFloor: number;
+    thinSkills: { section: 'rw' | 'math'; skill: string; worst: number }[];
+  } | null;
 }
 
 export async function getHealthSummary(): Promise<HealthSummary> {
@@ -293,33 +308,36 @@ export async function getHealthSummary(): Promise<HealthSummary> {
 
   const todayUtcStart = new Date().toISOString().slice(0, 10) + 'T00:00:00Z';
 
-  const [failuresRes, runRes, latestInsertRes, todayCountRes] = await Promise.all([
-    admin
-      .schema('sat')
-      .from('save_failures')
-      .select('id', { count: 'exact', head: true })
-      .gt('created_at', sevenDaysAgo),
-    admin
-      .schema('sat')
-      .from('generation_runs')
-      .select('started_at, completed_at, summary')
-      .order('started_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    admin
-      .schema('sat')
-      .from('questions')
-      .select('created_at')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    // head:true exact count — never tally rows in JS (admin-count-maxrows gotcha).
-    admin
-      .schema('sat')
-      .from('questions')
-      .select('id', { count: 'exact', head: true })
-      .gte('created_at', todayUtcStart),
-  ]);
+  const [failuresRes, runRes, latestInsertRes, todayCountRes, stateRes] =
+    await Promise.all([
+      admin
+        .schema('sat')
+        .from('save_failures')
+        .select('id', { count: 'exact', head: true })
+        .gt('created_at', sevenDaysAgo),
+      admin
+        .schema('sat')
+        .from('generation_runs')
+        .select('started_at, completed_at, summary')
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      admin
+        .schema('sat')
+        .from('questions')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      // head:true exact count — never tally rows in JS (admin-count-maxrows gotcha).
+      admin
+        .schema('sat')
+        .from('questions')
+        .select('id', { count: 'exact', head: true })
+        .gte('created_at', todayUtcStart),
+      // Same snapshot RPC the generators gate on (see generate.ts).
+      admin.schema('sat').rpc('generator_state'),
+    ]);
 
   if (failuresRes.error) {
     console.error('[getHealthSummary] save_failures count failed:', failuresRes.error);
@@ -332,6 +350,9 @@ export async function getHealthSummary(): Promise<HealthSummary> {
   }
   if (todayCountRes.error) {
     console.error('[getHealthSummary] today insert count failed:', todayCountRes.error);
+  }
+  if (stateRes.error) {
+    console.error('[getHealthSummary] generator_state read failed:', stateRes.error);
   }
 
   const row = runRes.error ? null : runRes.data;
@@ -359,10 +380,48 @@ export async function getHealthSummary(): Promise<HealthSummary> {
       }
     : null;
 
+  // Pool inventory: cross-product SKILLS against the per-skill worst-student
+  // counts (missing entries mean that skill has no enabled questions → 0,
+  // the generate.ts convention) and keep the below-floor ones, thinnest
+  // first. Forced empty when there are no active students yet — every skill
+  // would read 0 and the list would be meaningless.
+  let pool: HealthSummary['pool'] = null;
+  if (!stateRes.error && stateRes.data) {
+    const state = stateRes.data as unknown as {
+      minActiveUserUnseen: number | null;
+      bufferTarget: number;
+      neverServedFloor: number;
+      skills: { section: 'rw' | 'math'; skill: string; worstStudentUnseen: number }[];
+    };
+    const skillWorst = new Map<string, number>();
+    for (const s of state.skills ?? []) {
+      skillWorst.set(`${s.section}|${s.skill}`, s.worstStudentUnseen);
+    }
+    const thinSkills: { section: 'rw' | 'math'; skill: string; worst: number }[] = [];
+    if (state.minActiveUserUnseen !== null) {
+      for (const section of ['rw', 'math'] as const) {
+        for (const skill of SKILLS[section]) {
+          const worst = skillWorst.get(`${section}|${skill}`) ?? 0;
+          if (worst < state.neverServedFloor) {
+            thinSkills.push({ section, skill, worst });
+          }
+        }
+      }
+      thinSkills.sort((a, b) => a.worst - b.worst);
+    }
+    pool = {
+      minActiveUserUnseen: state.minActiveUserUnseen,
+      bufferTarget: state.bufferTarget,
+      neverServedFloor: state.neverServedFloor,
+      thinSkills,
+    };
+  }
+
   return {
     saveFailures7d: failuresRes.error ? 0 : failuresRes.count ?? 0,
     lastRun,
     lastInsert,
+    pool,
   };
 }
 
