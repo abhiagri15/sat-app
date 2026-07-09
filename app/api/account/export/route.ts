@@ -44,7 +44,7 @@ export async function GET() {
       sat
         .from('practice_responses')
         .select(
-          'session_id, position, question_id, skill, response_format, chosen_index, entered_value, is_correct',
+          'session_id, position, question_id, skill, response_format, chosen_index, entered_value, is_correct, time_ms, miss_reason',
         )
         .order('position', { ascending: true }),
       sat

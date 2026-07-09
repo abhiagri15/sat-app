@@ -17,9 +17,16 @@ import { createAdminClient } from '@/app/lib/supabase/admin';
 //   test_attempts     → attempt_responses
 //   practice_sessions → practice_responses
 // The rest are leaf tables owned per-user. This mirrors e2e/support/cleanup.ts's
-// list (five tables) PLUS skill_guidance (private per-user coaching) and
-// profiles (the sat.profiles row itself — deleted last of the rows, before the
-// auth user). We intentionally do NOT touch the shared/pool tables.
+// list PLUS profiles (the sat.profiles row itself — deleted last of the rows,
+// before the auth user). We intentionally do NOT touch the shared/pool tables.
+//
+// practice_topups (the top-up rate-cap trail) and save_failures (the save
+// diagnostics trail) carry the user's user_id but have NO FK to auth.users,
+// so they are NOT cascade-deleted by auth.admin.deleteUser — they must be in
+// this list or deleted accounts leave residual rows (found by the 2026-07-09
+// erasure-completeness review; the privacy page promises full removal).
+// save_failures.user_id is nullable (it records not-authenticated failures
+// too) — the .eq() match only removes THIS user's rows, never the null ones.
 const USER_SCOPED_TABLES = [
   'test_attempts',
   'practice_sessions',
@@ -27,6 +34,8 @@ const USER_SCOPED_TABLES = [
   'served_questions',
   'coach_explains',
   'skill_guidance',
+  'practice_topups',
+  'save_failures',
   'profiles',
 ] as const;
 
